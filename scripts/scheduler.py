@@ -1,238 +1,317 @@
-﻿import asyncio, os, sys, re, random, argparse
-from datetime import datetime, date
+"""
+Scheduler haute performance — objectif 30 000 fiches paysagistes sur toute la France.
+
+Usage :
+    python scheduler.py                        # tous les départements
+    python scheduler.py --dept 69              # un seul département
+    python scheduler.py --dry-run              # test sans écriture DB
+    python scheduler.py --headless false       # fenêtre visible
+    python scheduler.py --objectif 5000        # objectif personnalisé
+"""
+import asyncio
+import argparse
+import random
+import sys
+from datetime import datetime
 from pathlib import Path
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from dotenv import load_dotenv
-load_dotenv()
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+import config
+from config import log, DATABASE_URL, VILLES, OBJECTIF_TOTAL, CAPTCHA_WAIT
+from models import Base, VilleProgress
+from scrapers import BlocageDetecte, scraper_ville_gen, pause_ville
+
+try:
+    from playwright_stealth import stealth_async
+except ImportError:
+    from playwright_stealth import Stealth
+    async def stealth_async(page):
+        await Stealth().apply_stealth_async(page)
+
 from playwright.async_api import async_playwright
-from playwright_stealth import stealth_async
-from sqlalchemy import Column, DateTime, Float, Integer, Text, text
+from sqlalchemy import text, select
 from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker
-from sqlalchemy.orm import DeclarativeBase
 
-DATABASE_URL    = os.getenv("DATABASE_URL")
-HEADLESS        = os.getenv("HEADLESS", "true").lower() == "true"
-MIN_DELAY       = int(os.getenv("MIN_DELAY", "10"))
-MAX_DELAY       = int(os.getenv("MAX_DELAY", "30"))
-OBJECTIF_JOUR   = 50
-SESSIONS_PAR_JOUR = 5
-PAR_SESSION     = OBJECTIF_JOUR // SESSIONS_PAR_JOUR
 
-class Base(DeclarativeBase):
-    pass
+# ---------------------------------------------------------------------------
+# Gestion de la progression (table villes_scraping)
+# ---------------------------------------------------------------------------
 
-class Landscaper(Base):
-    __tablename__ = "landscapers"
-    place_id     = Column(Text, primary_key=True)
-    name         = Column(Text, nullable=False)
-    phone        = Column(Text, nullable=True)
-    address      = Column(Text, nullable=True)
-    website      = Column(Text, nullable=True)
-    rating       = Column(Float, nullable=True)
-    review_count = Column(Integer, nullable=True)
-    latitude     = Column(Float, nullable=True)
-    longitude    = Column(Float, nullable=True)
-    maps_url     = Column(Text, nullable=True)
-    scraped_at   = Column(DateTime, default=datetime.utcnow)
+async def init_progress(session, depts: list[str]) -> None:
+    """Insère toutes les villes en 'pending' si elles ne sont pas encore trackées."""
+    rows = [
+        {"dept": dept, "ville": ville}
+        for dept in depts
+        for ville in VILLES[dept]
+    ]
+    await session.execute(
+        text("""
+            INSERT INTO villes_scraping (dept, ville, status, count)
+            VALUES (:dept, :ville, 'pending', 0)
+            ON CONFLICT DO NOTHING
+        """),
+        rows,
+    )
+    await session.commit()
 
-class GridTask(Base):
-    __tablename__ = "grid_tasks"
-    id            = Column(Integer, primary_key=True, autoincrement=True)
-    min_lat       = Column(Float, nullable=False)
-    min_lon       = Column(Float, nullable=False)
-    max_lat       = Column(Float, nullable=False)
-    max_lon       = Column(Float, nullable=False)
-    status        = Column(Text, default="pending")
-    results_count = Column(Integer, default=0)
 
-VILLES = {
-    "01": ["Bourg-en-Bresse","Oyonnax","Amberieu-en-Bugey"],
-    "06": ["Nice","Cannes","Antibes","Menton","Grasse"],
-    "13": ["Marseille","Aix-en-Provence","Arles","Martigues"],
-    "21": ["Dijon","Beaune","Chenove"],
-    "25": ["Besancon","Montbeliard","Pontarlier"],
-    "31": ["Toulouse","Blagnac","Colomiers","Tournefeuille"],
-    "33": ["Bordeaux","Merignac","Pessac","Talence","Libourne"],
-    "34": ["Montpellier","Beziers","Sete","Agde"],
-    "35": ["Rennes","Saint-Malo","Fougeres","Cesson-Sevigne"],
-    "38": ["Grenoble","Vienne","Echirolles","Bourgoin-Jallieu"],
-    "44": ["Nantes","Saint-Nazaire","Saint-Herblain","Reze"],
-    "45": ["Orleans","Montargis","Olivet"],
-    "49": ["Angers","Cholet","Saumur"],
-    "51": ["Reims","Chalons-en-Champagne","Epernay"],
-    "54": ["Nancy","Vandoeuvre-les-Nancy","Luneville"],
-    "57": ["Metz","Thionville","Forbach"],
-    "59": ["Lille","Roubaix","Tourcoing","Dunkerque","Valenciennes"],
-    "62": ["Calais","Boulogne-sur-Mer","Arras","Lens"],
-    "63": ["Clermont-Ferrand","Riom","Issoire","Vichy"],
-    "67": ["Strasbourg","Haguenau","Schiltigheim"],
-    "69": ["Lyon","Villeurbanne","Venissieux","Saint-Priest","Bron","Caluire-et-Cuire"],
-    "74": ["Annecy","Thonon-les-Bains","Annemasse","Cluses"],
-    "75": ["Paris 1er","Paris 8eme","Paris 15eme","Paris 16eme"],
-    "76": ["Rouen","Le Havre","Dieppe"],
-    "77": ["Melun","Meaux","Fontainebleau","Chelles"],
-    "78": ["Versailles","Saint-Germain-en-Laye","Mantes-la-Jolie"],
-    "80": ["Amiens","Abbeville"],
-    "83": ["Toulon","Frejus","Hyeres","Draguignan"],
-    "84": ["Avignon","Orange","Carpentras"],
-    "85": ["La Roche-sur-Yon","Les Sables-d-Olonne","Challans"],
-    "91": ["Evry","Corbeil-Essonnes","Massy","Palaiseau"],
-    "92": ["Nanterre","Boulogne-Billancourt","Colombes","Asnieres-sur-Seine"],
-    "93": ["Saint-Denis","Montreuil","Aubervilliers","Bobigny"],
-    "94": ["Creteil","Vincennes","Vitry-sur-Seine","Ivry-sur-Seine"],
-    "95": ["Cergy","Argenteuil","Sarcelles","Pontoise"],
-}
+async def get_villes_restantes(session, dept: str) -> list[str]:
+    """Retourne les villes du département pas encore 'done', dans l'ordre alphabétique."""
+    r = await session.execute(
+        select(VilleProgress.ville)
+        .where(VilleProgress.dept == dept, VilleProgress.status != "done")
+        .order_by(VilleProgress.ville)
+    )
+    return list(r.scalars())
 
-def clean_phone(raw):
-    if not raw: return None
-    digits = re.sub(r"\D", "", raw)
-    if len(digits) == 10 and digits.startswith("0"): return digits
-    if len(digits) == 11 and digits.startswith("33"): return "0" + digits[2:]
-    return raw
 
-async def pause():
-    t = random.uniform(MIN_DELAY, MAX_DELAY)
-    print(f"  Pause {t:.0f}s...")
-    await asyncio.sleep(t)
-
-async def accepter_cookies(page):
-    try:
-        btn = page.locator("button:has-text('Tout accepter')").first
-        if await btn.is_visible(timeout=3000):
-            await btn.click()
-            await asyncio.sleep(2)
-    except: pass
-
-async def extraire_texte(page, selector):
-    try:
-        el = page.locator(selector).first
-        if await el.is_visible(timeout=2000):
-            return (await el.inner_text()).strip()
-    except: pass
-    return None
-
-async def extraire_champ(page, labels):
-    for label in labels:
-        for sel in [f"button[data-item-id*='{label}']", f"a[data-item-id*='{label}']", f"[aria-label*='{label}']"]:
-            try:
-                el = page.locator(sel).first
-                if await el.is_visible(timeout=1500):
-                    t = (await el.inner_text()).strip()
-                    if t: return t
-            except: continue
-    return None
-
-async def scraper_fiche(page, place_id, session):
-    await page.goto(f"https://www.google.fr/maps/place/?q=place_id:{place_id}", wait_until="domcontentloaded", timeout=25000)
-    await asyncio.sleep(random.uniform(2, 3))
-    name    = await extraire_texte(page, "h1")
-    phone   = clean_phone(await extraire_champ(page, ["phone","telephone","Telephone"]))
-    website = await extraire_champ(page, ["website","site","Site Web","Website"])
-    address = await extraire_champ(page, ["address","adresse","Adresse"])
-    rating, review_count = None, None
-    try:
-        aria = await page.locator("span[aria-label*='toile']").first.get_attribute("aria-label")
-        if aria:
-            m = re.search(r"([\d,]+)\s*", aria)
-            if m: rating = float(m.group(1).replace(",","."))
-            m2 = re.search(r"([\d\s]+)\s*avis", aria)
-            if m2: review_count = int(m2.group(1).replace(" ",""))
-    except: pass
-    if not name: return False
-    try:
-        await session.execute(text("""
-            INSERT INTO landscapers (place_id,name,phone,address,website,rating,review_count,maps_url,scraped_at)
-            VALUES (:pid,:name,:phone,:address,:website,:rating,:reviews,:url,:scraped)
-            ON CONFLICT (place_id) DO NOTHING
-        """), {"pid":place_id,"name":name,"phone":phone,"address":address,"website":website,
-               "rating":rating,"reviews":review_count,
-               "url":f"https://www.google.fr/maps/place/?q=place_id:{place_id}","scraped":datetime.utcnow()})
+async def marquer_ville_done(session, dept: str, ville: str, count: int) -> None:
+    prog = await session.get(VilleProgress, (dept, ville))
+    if prog:
+        prog.status = "done"
+        prog.count = count
+        prog.done_at = datetime.utcnow()
         await session.commit()
-        print(f"  OK {name} | {phone or '-'} | {website or '-'}")
-        return True
-    except Exception as e:
-        print(f"  Erreur : {e}")
-        return False
 
-async def scraper_ville(page, ville, session, max_r):
-    print(f"\n  Recherche : paysagiste {ville}")
-    try:
-        await page.goto(f"https://www.google.fr/maps/search/paysagiste+{ville.replace(' ','+')}", wait_until="domcontentloaded", timeout=30000)
-        await asyncio.sleep(3)
-        await accepter_cookies(page)
-        for _ in range(4):
-            await page.keyboard.press("End")
-            await asyncio.sleep(1.5)
-        links = await page.locator("a[href*='/maps/place/']").all()
-        pids, seen = [], set()
-        for l in links:
-            href = await l.get_attribute("href")
-            if not href: continue
-            m = re.search(r"place/[^/]+/([^/]+)", href) or re.search(r"!1s([^!]+)!", href)
-            if m and m.group(1) not in seen:
-                seen.add(m.group(1)); pids.append(m.group(1))
-        print(f"  {len(pids)} fiches trouvees")
-        saved = 0
-        for pid in pids[:max_r]:
-            r = await session.execute(text("SELECT place_id FROM landscapers WHERE place_id=:pid"), {"pid":pid})
-            if r.fetchone(): continue
-            if await scraper_fiche(page, pid, session): saved += 1
-            if saved >= max_r: break
-            await asyncio.sleep(random.uniform(2,3))
-        return saved
-    except Exception as e:
-        print(f"  Erreur {ville}: {e}"); return 0
 
-async def lancer_session(dept, objectif, num, total):
-    villes = VILLES[dept].copy()
-    random.shuffle(villes)
+# ---------------------------------------------------------------------------
+# Statistiques — affichées toutes les 10 fiches
+# ---------------------------------------------------------------------------
+
+async def afficher_stats(session, run_start: datetime, total_run: int, objectif: int) -> None:
+    r = await session.execute(text("SELECT COUNT(*) FROM landscapers"))
+    total_db = r.scalar() or 0
+
+    elapsed_h = (datetime.now() - run_start).total_seconds() / 3600
+    speed = total_run / elapsed_h if elapsed_h > 0.001 else 0
+    restant = max(0, objectif - total_db)
+    pct = total_db / objectif * 100
+
+    if speed > 0:
+        eta_h = restant / speed
+        if eta_h > 24:
+            eta_str = f"{eta_h / 24:.1f} jours"
+        else:
+            eta_str = f"{eta_h:.0f}h"
+    else:
+        eta_str = "?"
+
+    log.info(
+        f"  STATS | {total_db:,}/{objectif:,} ({pct:.1f}%) | "
+        f"+{total_run} session | "
+        f"{speed:.0f} f/h | "
+        f"ETA {eta_str}"
+    )
+
+
+# ---------------------------------------------------------------------------
+# Boucle principale
+# ---------------------------------------------------------------------------
+
+async def lancer_scraping(depts: list[str], objectif: int) -> int:
+    """
+    Parcourt tous les départements/villes dans l'ordre.
+    Reprend automatiquement là où on s'est arrêté grâce à villes_scraping.
+    Gère les CAPTCHAs avec pause et retry automatiques.
+    Pas de pause entre sessions : enchaîne directement.
+    """
     engine = create_async_engine(DATABASE_URL, echo=False)
     SL = async_sessionmaker(engine, expire_on_commit=False)
-    total_s = 0
-    async with async_playwright() as p:
-        browser = await p.chromium.launch(headless=HEADLESS, args=["--lang=fr-FR","--no-sandbox"])
-        ctx = await browser.new_context(locale="fr-FR", timezone_id="Europe/Paris", viewport={"width":1280,"height":900})
-        page = await ctx.new_page()
-        await stealth_async(page)
-        async with SL() as session:
-            r = await session.execute(text("SELECT COUNT(*) FROM landscapers WHERE DATE(scraped_at)=:d"), {"d":date.today()})
-            print(f"\n  Aujourd'hui : {r.scalar()} | Objectif session : {objectif}")
-            par_ville = max(2, objectif // len(villes) + 1)
-            for ville in villes:
-                if total_s >= objectif: break
-                saved = await scraper_ville(page, ville, session, min(par_ville, objectif-total_s))
-                total_s += saved
-                print(f"  Session {num}/{total} : {total_s}/{objectif}")
-                if total_s < objectif: await pause()
-        await browser.close()
-    await engine.dispose()
-    return total_s
+    run_start = datetime.now()
+    total_run = 0
+    villes_ignorees: list[tuple[str, str]] = []  # (dept, ville) ignorées pour CAPTCHA
 
-async def main():
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--dept", type=str, help="Numero de departement ex: 69")
+    try:
+        # Crée villes_scraping si elle n'existe pas (première exécution)
+        async with engine.begin() as conn:
+            await conn.run_sync(Base.metadata.create_all)
+
+        # Initialise la progression pour tous les depts à scraper
+        async with SL() as s:
+            await init_progress(s, depts)
+
+        async with async_playwright() as p:
+            browser = await p.chromium.launch(
+                headless=config.HEADLESS,
+                args=["--lang=fr-FR", "--no-sandbox"],
+            )
+            ctx = await browser.new_context(
+                locale="fr-FR",
+                timezone_id="Europe/Paris",
+                viewport={"width": 1280, "height": 900},
+            )
+            page = await ctx.new_page()
+            await stealth_async(page)
+
+            for dept in depts:
+                # Vérifie objectif global avant chaque département
+                async with SL() as s:
+                    r = await s.execute(text("SELECT COUNT(*) FROM landscapers"))
+                    if (r.scalar() or 0) >= objectif:
+                        log.info(f"Objectif {objectif:,} atteint !")
+                        break
+                    villes = await get_villes_restantes(s, dept)
+
+                if not villes:
+                    log.info(f"Département {dept} déjà complet — suivant.")
+                    continue
+
+                log.info("=" * 55)
+                log.info(f"DÉPARTEMENT {dept} | {len(villes)} ville(s) restante(s)")
+                log.info("=" * 55)
+
+                for i, ville in enumerate(villes):
+                    # Vérifie objectif avant chaque ville
+                    async with SL() as s:
+                        r = await s.execute(text("SELECT COUNT(*) FROM landscapers"))
+                        if (r.scalar() or 0) >= objectif:
+                            log.info(f"Objectif {objectif:,} atteint !")
+                            break
+
+                    captcha_attempts = 0
+                    ville_count = 0
+
+                    while True:  # boucle retry CAPTCHA
+                        try:
+                            async with SL() as s:
+                                async for _ in scraper_ville_gen(page, ville, s):
+                                    total_run += 1
+                                    ville_count += 1
+                                    if total_run % 10 == 0:
+                                        await afficher_stats(s, run_start, total_run, objectif)
+
+                            async with SL() as s:
+                                await marquer_ville_done(s, dept, ville, ville_count)
+                            log.info(f"  {ville} terminée — {ville_count} fiche(s)")
+                            break  # succès → passe à la ville suivante
+
+                        except BlocageDetecte:
+                            captcha_attempts += 1
+                            log.warning(
+                                f"  CAPTCHA #{captcha_attempts} sur {ville} "
+                                f"— pause {CAPTCHA_WAIT // 60} min"
+                            )
+                            await asyncio.sleep(CAPTCHA_WAIT)
+                            if captcha_attempts >= 3:
+                                log.warning(
+                                    f"  3 CAPTCHAs consécutifs — {ville} mise de côté, "
+                                    f"sera retentée en fin de session"
+                                )
+                                villes_ignorees.append((dept, ville))
+                                break
+
+                    # Pause entre villes (pas après la dernière)
+                    if i < len(villes) - 1:
+                        await pause_ville()
+
+            # -----------------------------------------------------------
+            # Passe finale : retente les villes ignorées pour CAPTCHA
+            # -----------------------------------------------------------
+            if villes_ignorees:
+                log.info("=" * 55)
+                log.info(f"REPRISE FINALE — {len(villes_ignorees)} ville(s) ignorée(s)")
+                log.info("=" * 55)
+
+                for dept, ville in villes_ignorees:
+                    async with SL() as s:
+                        r = await s.execute(text("SELECT COUNT(*) FROM landscapers"))
+                        if (r.scalar() or 0) >= objectif:
+                            log.info(f"Objectif {objectif:,} atteint, reprise annulée.")
+                            break
+
+                    log.info(f"Nouvelle tentative : {ville} ({dept}) — pause préventive 15 min")
+                    await asyncio.sleep(CAPTCHA_WAIT)
+
+                    ville_count = 0
+                    try:
+                        async with SL() as s:
+                            async for _ in scraper_ville_gen(page, ville, s):
+                                total_run += 1
+                                ville_count += 1
+                                if total_run % 10 == 0:
+                                    await afficher_stats(s, run_start, total_run, objectif)
+
+                        async with SL() as s:
+                            await marquer_ville_done(s, dept, ville, ville_count)
+                        log.info(f"  {ville} récupérée — {ville_count} fiche(s)")
+
+                    except BlocageDetecte:
+                        log.error(
+                            f"  {ville} toujours bloquée — laissée en pending "
+                            f"pour la prochaine session"
+                        )
+                    except Exception as exc:
+                        log.error(f"  Erreur sur {ville} en reprise finale : {exc}")
+
+            await browser.close()
+
+    finally:
+        await engine.dispose()
+
+    return total_run
+
+
+# ---------------------------------------------------------------------------
+# Point d'entrée
+# ---------------------------------------------------------------------------
+
+async def main() -> None:
+    parser = argparse.ArgumentParser(
+        description="Scraper paysagistes Google Maps — objectif 30 000 fiches"
+    )
+    parser.add_argument(
+        "--dept", type=str,
+        help="Code département (ex: 69). Omis = tous les départements dans l'ordre"
+    )
+    parser.add_argument(
+        "--headless", type=str, default=None, choices=["true", "false"],
+        help="Override HEADLESS du .env"
+    )
+    parser.add_argument(
+        "--dry-run", action="store_true",
+        help="Extrait les données sans écrire en base"
+    )
+    parser.add_argument(
+        "--objectif", type=int, default=OBJECTIF_TOTAL,
+        help=f"Objectif total (défaut : {OBJECTIF_TOTAL:,})"
+    )
     args = parser.parse_args()
-    print("\n" + "="*50)
-    print("  Scheduler Paysagistes - 50/jour automatique")
-    print("="*50)
-    dept = args.dept.zfill(2) if args.dept else input("\nDepartement (ex: 69) : ").strip().zfill(2)
-    if dept not in VILLES:
-        print(f"Departement {dept} non disponible. Disponibles : {', '.join(sorted(VILLES.keys()))}")
-        sys.exit(1)
-    print(f"\nObjectif : {OBJECTIF_JOUR}/jour en {SESSIONS_PAR_JOUR} sessions de {PAR_SESSION}")
-    total_jour = 0
-    for i in range(1, SESSIONS_PAR_JOUR + 1):
-        print(f"\n{'â”€'*50}")
-        print(f"  SESSION {i}/{SESSIONS_PAR_JOUR} - {datetime.now().strftime('%H:%M:%S')}")
-        print(f"{'â”€'*50}")
-        saved = await lancer_session(dept, PAR_SESSION, i, SESSIONS_PAR_JOUR)
-        total_jour += saved
-        print(f"\n  Session {i} terminee : +{saved} | Total jour : {total_jour}/{OBJECTIF_JOUR}")
-        if i < SESSIONS_PAR_JOUR:
-            print(f"\n  Prochaine session dans 2h30. En attente... (Ctrl+C pour arreter)")
-            await asyncio.sleep(2.5 * 3600)
-    print(f"\n{'='*50}\n  Journee terminee ! {total_jour} paysagistes ajoutes.\n{'='*50}\n")
+
+    if args.headless is not None:
+        config.HEADLESS = args.headless == "true"
+    if args.dry_run:
+        config.DRY_RUN = True
+        log.info("Mode DRY-RUN actif — pas d'écriture en base")
+
+    if args.dept:
+        dept = args.dept.zfill(2)
+        if dept not in VILLES:
+            log.error(f"Département {dept!r} inconnu. Disponibles : {', '.join(sorted(VILLES))}")
+            sys.exit(1)
+        depts = [dept]
+    else:
+        depts = sorted(VILLES.keys())  # tous les départements, du 01 au 95
+
+    nb_villes = sum(len(VILLES[d]) for d in depts)
+    log.info("=" * 55)
+    log.info(f"  Scraper Paysagistes — Objectif {args.objectif:,} fiches")
+    log.info(f"  {len(depts)} département(s) | {nb_villes} ville(s)")
+    log.info(f"  Délais : {config.MIN_DELAY_FICHE}-{config.MAX_DELAY_FICHE}s/fiche | "
+             f"{config.MIN_DELAY}-{config.MAX_DELAY}s/ville")
+    if config.DRY_RUN:
+        log.info("  *** DRY-RUN — pas d'écriture en base ***")
+    log.info("=" * 55)
+
+    total = await lancer_scraping(depts, args.objectif)
+
+    log.info("=" * 55)
+    log.info(f"  Session terminée : +{total} fiches ajoutées")
+    log.info("=" * 55)
+
 
 if __name__ == "__main__":
-    try: asyncio.run(main())
-    except KeyboardInterrupt: print("\n  Arrete manuellement.\n")
+    try:
+        asyncio.run(main())
+    except KeyboardInterrupt:
+        log.info("Arrêté manuellement.")

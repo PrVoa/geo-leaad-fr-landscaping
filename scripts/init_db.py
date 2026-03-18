@@ -28,6 +28,7 @@ class Landscaper(Base):
     phone        = Column(Text,    nullable=True)
     address      = Column(Text,    nullable=True)
     website      = Column(Text,    nullable=True)
+    email        = Column(Text,    nullable=True)
     rating       = Column(Float,   nullable=True)
     review_count = Column(Integer, nullable=True)
     latitude     = Column(Float,   nullable=True)
