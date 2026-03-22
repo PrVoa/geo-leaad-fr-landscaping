@@ -324,10 +324,10 @@
 
 <script>
 // ─────────────────────────────────────────────
-// CONFIG — remplacez SUPABASE_ANON_KEY
+// CONFIG
 // ─────────────────────────────────────────────
 const SUPABASE_URL      = 'https://tzwrzkiqdkcgaqnxntyt.supabase.co';
-const SUPABASE_ANON_KEY = 'sb_publishable_1qXmP6t8kV5Kl5LhfPcEog_iMAR3pI6'; // Supabase Dashboard > Settings > API
+const SUPABASE_ANON_KEY = 'sb_publishable_1qXmP6t8kV5Kl5LhfPcEog_iMAR3pI6';
 
 const PAGE_SIZE = 50;
 const STATUTS = ['nouveau', 'contacte', 'interesse', 'client', 'perdu'];
@@ -339,6 +339,9 @@ const TODAY = new Date().toISOString().slice(0, 10);
 // ─────────────────────────────────────────────
 const { createClient } = supabase;
 const db = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
+// Indique si les colonnes CRM (migration) sont disponibles
+let crmColumnsAvailable = false;
 
 // ─────────────────────────────────────────────
 // STATE
@@ -368,27 +371,28 @@ function isOverdue(dateStr) {
 // ─────────────────────────────────────────────
 // BUILD QUERY
 // ─────────────────────────────────────────────
-function buildQuery(countOnly = false) {
-  let q = db.from('landscapers').select(
-    countOnly
-      ? 'place_id', { count: 'exact', head: true }
-      : 'place_id,name,phone,address,website,email,maps_url,statut,notes,rappel_le,assigne_a,dept,scraped_at',
-    countOnly ? {} : { count: 'exact' }
-  );
+function buildQuery() {
+  const cols = crmColumnsAvailable
+    ? 'place_id,name,phone,address,website,email,maps_url,statut,notes,rappel_le,assigne_a,dept,scraped_at'
+    : 'place_id,name,phone,address,website,email,maps_url,scraped_at';
+
+  let q = db.from('landscapers').select(cols, { count: 'exact' });
 
   if (filters.search) {
     const s = filters.search.trim();
     q = q.or(`name.ilike.%${s}%,phone.ilike.%${s}%,email.ilike.%${s}%`);
   }
-  if (filters.statut)  q = q.eq('statut', filters.statut);
-  if (filters.dept)    q = q.eq('dept', filters.dept);
-  if (filters.assigne) q = q.eq('assigne_a', filters.assigne);
+  if (crmColumnsAvailable) {
+    if (filters.statut)  q = q.eq('statut', filters.statut);
+    if (filters.dept)    q = q.eq('dept', filters.dept);
+    if (filters.assigne) q = q.eq('assigne_a', filters.assigne);
 
-  if (filters.rappel === 'today')    q = q.eq('rappel_le', TODAY);
-  if (filters.rappel === 'overdue')  q = q.lt('rappel_le', TODAY).not('rappel_le', 'is', null);
-  if (filters.rappel === 'upcoming') {
-    const in7 = new Date(); in7.setDate(in7.getDate() + 7);
-    q = q.gte('rappel_le', TODAY).lte('rappel_le', in7.toISOString().slice(0,10));
+    if (filters.rappel === 'today')    q = q.eq('rappel_le', TODAY);
+    if (filters.rappel === 'overdue')  q = q.lt('rappel_le', TODAY).not('rappel_le', 'is', null);
+    if (filters.rappel === 'upcoming') {
+      const in7 = new Date(); in7.setDate(in7.getDate() + 7);
+      q = q.gte('rappel_le', TODAY).lte('rappel_le', in7.toISOString().slice(0,10));
+    }
   }
 
   return q;
@@ -601,48 +605,59 @@ async function onAssignChange(e) {
 // STATS
 // ─────────────────────────────────────────────
 async function loadStats() {
-  // Total
-  const { count: total } = await db.from('landscapers').select('place_id', { count: 'exact', head: true });
-  document.getElementById('s-total').textContent = `${(total || 0).toLocaleString('fr-FR')} total`;
+  try {
+    const { count: total, error: e1 } = await db
+      .from('landscapers').select('place_id', { count: 'exact', head: true });
+    if (!e1) document.getElementById('s-total').textContent =
+      `${(total || 0).toLocaleString('fr-FR')} total`;
 
-  // Aujourd'hui
-  const { count: today } = await db.from('landscapers')
-    .select('place_id', { count: 'exact', head: true })
-    .gte('scraped_at', TODAY + 'T00:00:00');
-  document.getElementById('s-today').textContent = `+${today || 0} aujourd'hui`;
-
-  // Par statut
-  for (const s of STATUTS) {
-    const { count } = await db.from('landscapers')
+    const { count: today, error: e2 } = await db.from('landscapers')
       .select('place_id', { count: 'exact', head: true })
-      .eq('statut', s);
-    document.getElementById(`s-${s}`).textContent = `${LABEL[s]} ${count || 0}`;
-  }
+      .gte('scraped_at', TODAY + 'T00:00:00');
+    if (!e2) document.getElementById('s-today').textContent = `+${today || 0} aujourd'hui`;
+  } catch (_) { /* stats non bloquantes */ }
+
+  if (!crmColumnsAvailable) return;
+  try {
+    for (const s of STATUTS) {
+      const { count, error } = await db.from('landscapers')
+        .select('place_id', { count: 'exact', head: true })
+        .eq('statut', s);
+      if (!error) document.getElementById(`s-${s}`).textContent = `${LABEL[s]} ${count || 0}`;
+    }
+  } catch (_) { /* stats statut non bloquantes */ }
 }
 
 // ─────────────────────────────────────────────
 // FILTRES
 // ─────────────────────────────────────────────
 async function loadFilterOptions() {
-  // Départements
-  const { data: depts } = await db.rpc('crm_depts');
-  const fDept = document.getElementById('f-dept');
-  (depts || []).forEach(d => {
-    const opt = document.createElement('option');
-    opt.value = d.dept;
-    opt.textContent = `${d.dept} (${d.nb})`;
-    fDept.appendChild(opt);
-  });
+  if (!crmColumnsAvailable) return;
+  try {
+    const { data: depts, error: e1 } = await db.rpc('crm_depts');
+    if (!e1 && depts) {
+      const fDept = document.getElementById('f-dept');
+      depts.forEach(d => {
+        const opt = document.createElement('option');
+        opt.value = d.dept;
+        opt.textContent = `${d.dept} (${d.nb})`;
+        fDept.appendChild(opt);
+      });
+    }
+  } catch (_) { /* RPC optionnelle */ }
 
-  // Assignés
-  const { data: assignes } = await db.rpc('crm_assignes');
-  const fAssign = document.getElementById('f-assigne');
-  (assignes || []).forEach(a => {
-    const opt = document.createElement('option');
-    opt.value = a.assigne_a;
-    opt.textContent = a.assigne_a;
-    fAssign.appendChild(opt);
-  });
+  try {
+    const { data: assignes, error: e2 } = await db.rpc('crm_assignes');
+    if (!e2 && assignes) {
+      const fAssign = document.getElementById('f-assigne');
+      assignes.forEach(a => {
+        const opt = document.createElement('option');
+        opt.value = a.assigne_a;
+        opt.textContent = a.assigne_a;
+        fAssign.appendChild(opt);
+      });
+    }
+  } catch (_) { /* RPC optionnelle */ }
 }
 
 function resetFilters() {
@@ -691,6 +706,26 @@ function initRealtime() {
 }
 
 // ─────────────────────────────────────────────
+// VÉRIFICATION MIGRATION
+// ─────────────────────────────────────────────
+async function checkMigration() {
+  // Teste si la colonne "statut" existe en faisant une requête minimaliste
+  const { error } = await db.from('landscapers')
+    .select('statut', { count: 'exact', head: true })
+    .limit(1);
+
+  if (error && (error.message.includes('statut') || error.code === '42703')) {
+    showError(
+      '⚠ Migration SQL non exécutée. Ouvrez Supabase Dashboard > SQL Editor et exécutez le contenu de crm/migration.sql. ' +
+      'Le CRM fonctionne en mode lecture seule en attendant.'
+    );
+    crmColumnsAvailable = false;
+  } else {
+    crmColumnsAvailable = true;
+  }
+}
+
+// ─────────────────────────────────────────────
 // BOOT
 // ─────────────────────────────────────────────
 (async function init() {
@@ -699,9 +734,24 @@ function initRealtime() {
     showLoader(false);
     return;
   }
-  await Promise.all([loadStats(), loadFilterOptions()]);
-  await loadPage();
-  initRealtime();
+
+  try {
+    // 1. Vérifie si la migration a été exécutée
+    await checkMigration();
+
+    // 2. Charge stats + filtres en parallèle (non bloquant)
+    await Promise.allSettled([loadStats(), loadFilterOptions()]);
+
+    // 3. Charge la première page
+    await loadPage();
+
+    // 4. Active le Realtime
+    initRealtime();
+  } catch (err) {
+    showLoader(false);
+    showError('Erreur de connexion Supabase : ' + (err.message || err));
+    console.error('[CRM] Erreur init :', err);
+  }
 })();
 </script>
 </body>
