@@ -327,7 +327,7 @@
 // CONFIG — remplacez SUPABASE_ANON_KEY
 // ─────────────────────────────────────────────
 const SUPABASE_URL      = 'https://tzwrzkiqdkcgaqnxntyt.supabase.co';
-const SUPABASE_ANON_KEY = 'VOTRE_CLE_ANON_ICI'; // Supabase Dashboard > Settings > API
+const SUPABASE_ANON_KEY = 'sb_publishable_1qXmP6t8kV5Kl5LhfPcEog_iMAR3pI6'; // Supabase Dashboard > Settings > API
 
 const PAGE_SIZE = 50;
 const STATUTS = ['nouveau', 'contacte', 'interesse', 'client', 'perdu'];
@@ -694,7 +694,7 @@ function initRealtime() {
 // BOOT
 // ─────────────────────────────────────────────
 (async function init() {
-  if (SUPABASE_ANON_KEY === 'VOTRE_CLE_ANON_ICI') {
+  if (!SUPABASE_ANON_KEY || SUPABASE_ANON_KEY === 'VOTRE_CLE_ANON_ICI') {
     showError('⚠ Configurez SUPABASE_ANON_KEY dans crm/index.html (Supabase Dashboard > Settings > API > anon public key)');
     showLoader(false);
     return;
