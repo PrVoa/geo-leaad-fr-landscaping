@@ -1,0 +1,708 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>CRM Paysagistes — Geo-Leaad</title>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  :root {
+    --bg: #f4f6f9;
+    --card: #ffffff;
+    --border: #e2e8f0;
+    --text: #1a202c;
+    --muted: #718096;
+    --primary: #3b82f6;
+    --danger: #ef4444;
+
+    --s-nouveau:   #94a3b8;
+    --s-contacte:  #3b82f6;
+    --s-interesse: #f97316;
+    --s-client:    #22c55e;
+    --s-perdu:     #ef4444;
+  }
+
+  body { font-family: 'Segoe UI', system-ui, sans-serif; background: var(--bg); color: var(--text); }
+
+  /* ── HEADER ── */
+  header {
+    background: var(--card);
+    border-bottom: 1px solid var(--border);
+    padding: 14px 24px;
+    display: flex;
+    align-items: center;
+    gap: 24px;
+    flex-wrap: wrap;
+    position: sticky;
+    top: 0;
+    z-index: 100;
+  }
+  header h1 { font-size: 1.1rem; font-weight: 700; flex-shrink: 0; }
+  .stats-bar { display: flex; gap: 14px; flex-wrap: wrap; }
+  .stat-chip {
+    font-size: .78rem;
+    padding: 3px 10px;
+    border-radius: 999px;
+    font-weight: 600;
+    border: 1px solid transparent;
+  }
+  .stat-chip.total    { background: #e2e8f0; color: #475569; }
+  .stat-chip.today    { background: #dbeafe; color: #1d4ed8; }
+  .stat-chip.nouveau  { background: #f1f5f9; color: #475569; border-color: var(--s-nouveau); }
+  .stat-chip.contacte { background: #eff6ff; color: #2563eb; border-color: var(--s-contacte); }
+  .stat-chip.interesse{ background: #fff7ed; color: #c2410c; border-color: var(--s-interesse); }
+  .stat-chip.client   { background: #f0fdf4; color: #15803d; border-color: var(--s-client); }
+  .stat-chip.perdu    { background: #fef2f2; color: #b91c1c; border-color: var(--s-perdu); }
+
+  #realtime-dot {
+    width: 8px; height: 8px; border-radius: 50%;
+    background: #94a3b8; margin-left: auto; flex-shrink: 0;
+    transition: background .4s;
+  }
+  #realtime-dot.connected { background: #22c55e; }
+
+  /* ── FILTRES ── */
+  #filters {
+    background: var(--card);
+    border-bottom: 1px solid var(--border);
+    padding: 10px 24px;
+    display: flex;
+    gap: 10px;
+    flex-wrap: wrap;
+    align-items: center;
+  }
+  #filters input, #filters select {
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 6px 10px;
+    font-size: .85rem;
+    background: var(--bg);
+    color: var(--text);
+    outline: none;
+    transition: border-color .2s;
+  }
+  #filters input:focus, #filters select:focus { border-color: var(--primary); }
+  #filters input#search { min-width: 220px; }
+  #btn-reset {
+    margin-left: auto;
+    font-size: .8rem;
+    color: var(--muted);
+    cursor: pointer;
+    background: none;
+    border: none;
+    padding: 4px 8px;
+    border-radius: 4px;
+  }
+  #btn-reset:hover { background: var(--border); }
+
+  /* ── TABLE ── */
+  #wrap { padding: 20px 24px; overflow-x: auto; }
+  table { width: 100%; border-collapse: collapse; font-size: .85rem; }
+  thead th {
+    background: var(--card);
+    border-bottom: 2px solid var(--border);
+    padding: 10px 12px;
+    text-align: left;
+    font-weight: 600;
+    color: var(--muted);
+    white-space: nowrap;
+  }
+  tbody tr { border-bottom: 1px solid var(--border); background: var(--card); }
+  tbody tr:hover { background: #f8fafc; }
+  tbody td { padding: 9px 12px; vertical-align: top; }
+
+  .col-name   { min-width: 160px; font-weight: 600; }
+  .col-phone  { white-space: nowrap; }
+  .col-dept   { text-align: center; width: 50px; }
+  .col-status { width: 120px; }
+  .col-notes  { min-width: 200px; }
+  .col-recall { width: 130px; }
+  .col-assign { min-width: 110px; }
+  .col-links  { white-space: nowrap; }
+
+  a { color: var(--primary); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+
+  /* ── BADGES STATUT ── */
+  .badge {
+    display: inline-block;
+    padding: 2px 9px;
+    border-radius: 999px;
+    font-size: .75rem;
+    font-weight: 600;
+    cursor: pointer;
+    user-select: none;
+    white-space: nowrap;
+  }
+  .badge.nouveau   { background: #f1f5f9; color: #475569; }
+  .badge.contacte  { background: #eff6ff; color: #2563eb; }
+  .badge.interesse { background: #fff7ed; color: #c2410c; }
+  .badge.client    { background: #f0fdf4; color: #15803d; }
+  .badge.perdu     { background: #fef2f2; color: #b91c1c; }
+
+  select.status-select {
+    font-size: .78rem;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 2px 4px;
+    background: var(--card);
+    cursor: pointer;
+  }
+
+  /* ── NOTES ── */
+  .notes-cell { position: relative; }
+  .notes-text {
+    min-height: 28px;
+    padding: 3px 6px;
+    border-radius: 5px;
+    border: 1px solid transparent;
+    cursor: pointer;
+    color: var(--text);
+    font-size: .82rem;
+    line-height: 1.4;
+    white-space: pre-wrap;
+    word-break: break-word;
+  }
+  .notes-text:hover { border-color: var(--border); background: var(--bg); }
+  .notes-text:empty::before { content: 'Ajouter une note…'; color: var(--muted); font-style: italic; }
+  textarea.notes-ta {
+    width: 100%;
+    min-height: 60px;
+    resize: vertical;
+    border: 1px solid var(--primary);
+    border-radius: 5px;
+    padding: 4px 6px;
+    font-size: .82rem;
+    font-family: inherit;
+    outline: none;
+    background: var(--card);
+  }
+  .save-indicator {
+    font-size: .7rem;
+    color: var(--muted);
+    position: absolute;
+    bottom: -14px;
+    right: 0;
+  }
+
+  /* ── RAPPEL ── */
+  input.rappel-input {
+    border: 1px solid var(--border);
+    border-radius: 5px;
+    padding: 3px 6px;
+    font-size: .82rem;
+    font-family: inherit;
+    background: var(--bg);
+    color: var(--text);
+    width: 115px;
+  }
+  input.rappel-input.overdue { border-color: var(--danger); background: #fef2f2; }
+
+  /* ── ASSIGNÉ ── */
+  input.assign-input {
+    border: 1px solid transparent;
+    border-radius: 5px;
+    padding: 3px 6px;
+    font-size: .82rem;
+    font-family: inherit;
+    background: transparent;
+    width: 100%;
+  }
+  input.assign-input:hover { border-color: var(--border); background: var(--bg); }
+  input.assign-input:focus { border-color: var(--primary); outline: none; background: var(--card); }
+
+  /* ── PAGINATION ── */
+  #pagination {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
+    padding: 16px 24px;
+    font-size: .85rem;
+    color: var(--muted);
+  }
+  .page-btn {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 5px 14px;
+    cursor: pointer;
+    font-size: .85rem;
+    transition: background .15s;
+  }
+  .page-btn:hover:not(:disabled) { background: var(--border); }
+  .page-btn:disabled { opacity: .4; cursor: default; }
+
+  /* ── LOADER ── */
+  #loader {
+    text-align: center;
+    padding: 40px;
+    color: var(--muted);
+    font-size: .9rem;
+    display: none;
+  }
+  #loader.visible { display: block; }
+  #error-msg {
+    background: #fef2f2;
+    color: #b91c1c;
+    border: 1px solid #fecaca;
+    border-radius: 8px;
+    padding: 12px 18px;
+    margin: 20px 24px;
+    font-size: .88rem;
+    display: none;
+  }
+  #error-msg.visible { display: block; }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>🌿 CRM Paysagistes</h1>
+  <div class="stats-bar" id="stats-bar">
+    <span class="stat-chip total" id="s-total">— total</span>
+    <span class="stat-chip today" id="s-today">— aujourd'hui</span>
+    <span class="stat-chip nouveau"   id="s-nouveau">—</span>
+    <span class="stat-chip contacte"  id="s-contacte">—</span>
+    <span class="stat-chip interesse" id="s-interesse">—</span>
+    <span class="stat-chip client"    id="s-client">—</span>
+    <span class="stat-chip perdu"     id="s-perdu">—</span>
+  </div>
+  <div id="realtime-dot" title="Sync temps réel"></div>
+</header>
+
+<div id="filters">
+  <input type="search" id="search" placeholder="Rechercher nom, tél, email…" />
+  <select id="f-statut">
+    <option value="">Tous les statuts</option>
+    <option value="nouveau">Nouveau</option>
+    <option value="contacte">Contacté</option>
+    <option value="interesse">Intéressé</option>
+    <option value="client">Client</option>
+    <option value="perdu">Perdu</option>
+  </select>
+  <select id="f-dept"><option value="">Tous les depts</option></select>
+  <select id="f-assigne"><option value="">Tous les assignés</option></select>
+  <select id="f-rappel">
+    <option value="">Rappels : tous</option>
+    <option value="today">Aujourd'hui</option>
+    <option value="overdue">En retard</option>
+    <option value="upcoming">Dans 7 jours</option>
+  </select>
+  <button id="btn-reset">✕ Réinitialiser</button>
+</div>
+
+<div id="error-msg"></div>
+<div id="loader" class="visible">Chargement…</div>
+
+<div id="wrap">
+  <table>
+    <thead>
+      <tr>
+        <th>Dept</th>
+        <th>Nom</th>
+        <th>Téléphone</th>
+        <th>Adresse</th>
+        <th>Statut</th>
+        <th>Notes</th>
+        <th>Rappel</th>
+        <th>Assigné</th>
+        <th>Liens</th>
+      </tr>
+    </thead>
+    <tbody id="tbody"></tbody>
+  </table>
+</div>
+
+<div id="pagination">
+  <button class="page-btn" id="btn-prev" disabled>← Préc.</button>
+  <span id="page-info"></span>
+  <button class="page-btn" id="btn-next" disabled>Suiv. →</button>
+</div>
+
+<script>
+// ─────────────────────────────────────────────
+// CONFIG — remplacez SUPABASE_ANON_KEY
+// ─────────────────────────────────────────────
+const SUPABASE_URL      = 'https://tzwrzkiqdkcgaqnxntyt.supabase.co';
+const SUPABASE_ANON_KEY = 'VOTRE_CLE_ANON_ICI'; // Supabase Dashboard > Settings > API
+
+const PAGE_SIZE = 50;
+const STATUTS = ['nouveau', 'contacte', 'interesse', 'client', 'perdu'];
+const LABEL = { nouveau: 'Nouveau', contacte: 'Contacté', interesse: 'Intéressé', client: 'Client', perdu: 'Perdu' };
+const TODAY = new Date().toISOString().slice(0, 10);
+
+// ─────────────────────────────────────────────
+// INIT SUPABASE
+// ─────────────────────────────────────────────
+const { createClient } = supabase;
+const db = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
+// ─────────────────────────────────────────────
+// STATE
+// ─────────────────────────────────────────────
+let currentPage = 0;
+let totalCount  = 0;
+let filters = { search: '', statut: '', dept: '', assigne: '', rappel: '' };
+let debounceTimer = null;
+
+// ─────────────────────────────────────────────
+// HELPERS
+// ─────────────────────────────────────────────
+function showError(msg) {
+  const el = document.getElementById('error-msg');
+  el.textContent = msg;
+  el.classList.add('visible');
+}
+function hideError() { document.getElementById('error-msg').classList.remove('visible'); }
+function showLoader(v) { document.getElementById('loader').classList.toggle('visible', v); }
+function esc(s) { return s ? String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;') : ''; }
+
+function isOverdue(dateStr) {
+  if (!dateStr) return false;
+  return dateStr < TODAY;
+}
+
+// ─────────────────────────────────────────────
+// BUILD QUERY
+// ─────────────────────────────────────────────
+function buildQuery(countOnly = false) {
+  let q = db.from('landscapers').select(
+    countOnly
+      ? 'place_id', { count: 'exact', head: true }
+      : 'place_id,name,phone,address,website,email,maps_url,statut,notes,rappel_le,assigne_a,dept,scraped_at',
+    countOnly ? {} : { count: 'exact' }
+  );
+
+  if (filters.search) {
+    const s = filters.search.trim();
+    q = q.or(`name.ilike.%${s}%,phone.ilike.%${s}%,email.ilike.%${s}%`);
+  }
+  if (filters.statut)  q = q.eq('statut', filters.statut);
+  if (filters.dept)    q = q.eq('dept', filters.dept);
+  if (filters.assigne) q = q.eq('assigne_a', filters.assigne);
+
+  if (filters.rappel === 'today')    q = q.eq('rappel_le', TODAY);
+  if (filters.rappel === 'overdue')  q = q.lt('rappel_le', TODAY).not('rappel_le', 'is', null);
+  if (filters.rappel === 'upcoming') {
+    const in7 = new Date(); in7.setDate(in7.getDate() + 7);
+    q = q.gte('rappel_le', TODAY).lte('rappel_le', in7.toISOString().slice(0,10));
+  }
+
+  return q;
+}
+
+// ─────────────────────────────────────────────
+// LOAD DATA
+// ─────────────────────────────────────────────
+async function loadPage() {
+  showLoader(true);
+  hideError();
+
+  const from = currentPage * PAGE_SIZE;
+  const to   = from + PAGE_SIZE - 1;
+
+  const { data, error, count } = await buildQuery()
+    .order('scraped_at', { ascending: false })
+    .range(from, to);
+
+  showLoader(false);
+
+  if (error) { showError('Erreur Supabase : ' + error.message); return; }
+
+  totalCount = count ?? 0;
+  renderTable(data || []);
+  renderPagination();
+}
+
+// ─────────────────────────────────────────────
+// RENDER TABLE
+// ─────────────────────────────────────────────
+function renderTable(rows) {
+  const tbody = document.getElementById('tbody');
+  tbody.innerHTML = rows.map(r => `
+    <tr data-id="${esc(r.place_id)}">
+      <td class="col-dept">${esc(r.dept || '—')}</td>
+      <td class="col-name">${esc(r.name)}</td>
+      <td class="col-phone">${r.phone ? `<a href="tel:${esc(r.phone)}">${esc(r.phone)}</a>` : '<span style="color:var(--muted)">—</span>'}</td>
+      <td>${esc(r.address || '')}</td>
+      <td class="col-status">${renderStatus(r)}</td>
+      <td class="col-notes notes-cell">${renderNotes(r)}</td>
+      <td class="col-recall">${renderRappel(r)}</td>
+      <td class="col-assign">${renderAssign(r)}</td>
+      <td class="col-links">${renderLinks(r)}</td>
+    </tr>
+  `).join('');
+
+  // Bind events
+  tbody.querySelectorAll('.badge').forEach(el => {
+    el.addEventListener('click', onBadgeClick);
+  });
+  tbody.querySelectorAll('.notes-text').forEach(el => {
+    el.addEventListener('click', onNotesClick);
+  });
+  tbody.querySelectorAll('.rappel-input').forEach(el => {
+    el.addEventListener('change', onRappelChange);
+  });
+  tbody.querySelectorAll('.assign-input').forEach(el => {
+    el.addEventListener('change', onAssignChange);
+  });
+}
+
+function renderStatus(r) {
+  const s = r.statut || 'nouveau';
+  return `<span class="badge ${s}" data-id="${esc(r.place_id)}" data-statut="${s}">${esc(LABEL[s] || s)}</span>`;
+}
+
+function renderNotes(r) {
+  const txt = r.notes ? esc(r.notes).replace(/\n/g, '<br>') : '';
+  return `<div class="notes-text" data-id="${esc(r.place_id)}" data-notes="${esc(r.notes || '')}">${txt}</div>`;
+}
+
+function renderRappel(r) {
+  const overdue = isOverdue(r.rappel_le) ? ' overdue' : '';
+  return `<input type="date" class="rappel-input${overdue}" data-id="${esc(r.place_id)}" value="${esc(r.rappel_le || '')}" />`;
+}
+
+function renderAssign(r) {
+  return `<input type="text" class="assign-input" data-id="${esc(r.place_id)}" value="${esc(r.assigne_a || '')}" placeholder="—" />`;
+}
+
+function renderLinks(r) {
+  const parts = [];
+  if (r.maps_url)  parts.push(`<a href="${esc(r.maps_url)}" target="_blank" title="Google Maps">Maps</a>`);
+  if (r.website)   parts.push(`<a href="${esc(r.website)}" target="_blank" title="Site web">Web</a>`);
+  if (r.email)     parts.push(`<a href="mailto:${esc(r.email)}" title="${esc(r.email)}">Mail</a>`);
+  return parts.join(' · ') || '<span style="color:var(--muted)">—</span>';
+}
+
+// ─────────────────────────────────────────────
+// PAGINATION
+// ─────────────────────────────────────────────
+function renderPagination() {
+  const totalPages = Math.ceil(totalCount / PAGE_SIZE) || 1;
+  document.getElementById('page-info').textContent =
+    `Page ${currentPage + 1} / ${totalPages} — ${totalCount.toLocaleString('fr-FR')} leads`;
+  document.getElementById('btn-prev').disabled = currentPage === 0;
+  document.getElementById('btn-next').disabled = currentPage >= totalPages - 1;
+}
+
+document.getElementById('btn-prev').addEventListener('click', () => { currentPage--; loadPage(); });
+document.getElementById('btn-next').addEventListener('click', () => { currentPage++; loadPage(); });
+
+// ─────────────────────────────────────────────
+// UPDATE HELPERS
+// ─────────────────────────────────────────────
+async function updateField(placeId, fields) {
+  const { error } = await db.from('landscapers').update(fields).eq('place_id', placeId);
+  if (error) showError('Erreur sauvegarde : ' + error.message);
+  else hideError();
+}
+
+// ─────────────────────────────────────────────
+// STATUS BADGE CLICK → inline select
+// ─────────────────────────────────────────────
+function onBadgeClick(e) {
+  const badge = e.currentTarget;
+  const id    = badge.dataset.id;
+  const cur   = badge.dataset.statut || 'nouveau';
+
+  const sel = document.createElement('select');
+  sel.className = 'status-select';
+  STATUTS.forEach(s => {
+    const opt = document.createElement('option');
+    opt.value = s; opt.textContent = LABEL[s];
+    if (s === cur) opt.selected = true;
+    sel.appendChild(opt);
+  });
+  badge.replaceWith(sel);
+  sel.focus();
+
+  const commit = async () => {
+    const newVal = sel.value;
+    await updateField(id, { statut: newVal });
+    const newBadge = document.createElement('span');
+    newBadge.className = `badge ${newVal}`;
+    newBadge.dataset.id     = id;
+    newBadge.dataset.statut = newVal;
+    newBadge.textContent    = LABEL[newVal];
+    newBadge.addEventListener('click', onBadgeClick);
+    sel.replaceWith(newBadge);
+    await loadStats();
+  };
+  sel.addEventListener('change', commit);
+  sel.addEventListener('blur', () => { setTimeout(() => { if (sel.parentNode) sel.replaceWith(badge); }, 150); });
+}
+
+// ─────────────────────────────────────────────
+// NOTES CLICK → textarea with debounced autosave
+// ─────────────────────────────────────────────
+function onNotesClick(e) {
+  const div = e.currentTarget;
+  if (div.querySelector('textarea')) return;
+  const id  = div.dataset.id;
+  const cur = div.dataset.notes || '';
+
+  const ta = document.createElement('textarea');
+  ta.className = 'notes-ta';
+  ta.value = cur;
+
+  const indicator = document.createElement('span');
+  indicator.className = 'save-indicator';
+  div.innerHTML = '';
+  div.appendChild(ta);
+  div.appendChild(indicator);
+  ta.focus();
+
+  let saveTimer = null;
+  ta.addEventListener('input', () => {
+    clearTimeout(saveTimer);
+    indicator.textContent = '…';
+    saveTimer = setTimeout(async () => {
+      await updateField(id, { notes: ta.value });
+      div.dataset.notes = ta.value;
+      indicator.textContent = '✓ Sauvegardé';
+    }, 1200);
+  });
+
+  ta.addEventListener('blur', () => {
+    clearTimeout(saveTimer);
+    const val = ta.value;
+    updateField(id, { notes: val });
+    div.dataset.notes = val;
+    const txt = val ? esc(val).replace(/\n/g, '<br>') : '';
+    div.innerHTML = txt;
+    div.addEventListener('click', onNotesClick, { once: true });
+  });
+}
+
+// ─────────────────────────────────────────────
+// RAPPEL CHANGE
+// ─────────────────────────────────────────────
+async function onRappelChange(e) {
+  const inp = e.currentTarget;
+  const id  = inp.dataset.id;
+  const val = inp.value || null;
+  inp.classList.toggle('overdue', isOverdue(val));
+  await updateField(id, { rappel_le: val });
+}
+
+// ─────────────────────────────────────────────
+// ASSIGN CHANGE
+// ─────────────────────────────────────────────
+async function onAssignChange(e) {
+  const inp = e.currentTarget;
+  await updateField(inp.dataset.id, { assigne_a: inp.value || null });
+}
+
+// ─────────────────────────────────────────────
+// STATS
+// ─────────────────────────────────────────────
+async function loadStats() {
+  // Total
+  const { count: total } = await db.from('landscapers').select('place_id', { count: 'exact', head: true });
+  document.getElementById('s-total').textContent = `${(total || 0).toLocaleString('fr-FR')} total`;
+
+  // Aujourd'hui
+  const { count: today } = await db.from('landscapers')
+    .select('place_id', { count: 'exact', head: true })
+    .gte('scraped_at', TODAY + 'T00:00:00');
+  document.getElementById('s-today').textContent = `+${today || 0} aujourd'hui`;
+
+  // Par statut
+  for (const s of STATUTS) {
+    const { count } = await db.from('landscapers')
+      .select('place_id', { count: 'exact', head: true })
+      .eq('statut', s);
+    document.getElementById(`s-${s}`).textContent = `${LABEL[s]} ${count || 0}`;
+  }
+}
+
+// ─────────────────────────────────────────────
+// FILTRES
+// ─────────────────────────────────────────────
+async function loadFilterOptions() {
+  // Départements
+  const { data: depts } = await db.rpc('crm_depts');
+  const fDept = document.getElementById('f-dept');
+  (depts || []).forEach(d => {
+    const opt = document.createElement('option');
+    opt.value = d.dept;
+    opt.textContent = `${d.dept} (${d.nb})`;
+    fDept.appendChild(opt);
+  });
+
+  // Assignés
+  const { data: assignes } = await db.rpc('crm_assignes');
+  const fAssign = document.getElementById('f-assigne');
+  (assignes || []).forEach(a => {
+    const opt = document.createElement('option');
+    opt.value = a.assigne_a;
+    opt.textContent = a.assigne_a;
+    fAssign.appendChild(opt);
+  });
+}
+
+function resetFilters() {
+  filters = { search: '', statut: '', dept: '', assigne: '', rappel: '' };
+  document.getElementById('search').value = '';
+  document.getElementById('f-statut').value  = '';
+  document.getElementById('f-dept').value    = '';
+  document.getElementById('f-assigne').value = '';
+  document.getElementById('f-rappel').value  = '';
+  currentPage = 0;
+  loadPage();
+}
+
+document.getElementById('search').addEventListener('input', e => {
+  clearTimeout(debounceTimer);
+  debounceTimer = setTimeout(() => {
+    filters.search = e.target.value;
+    currentPage = 0;
+    loadPage();
+  }, 400);
+});
+
+['f-statut','f-dept','f-assigne','f-rappel'].forEach(id => {
+  document.getElementById(id).addEventListener('change', e => {
+    const key = { 'f-statut': 'statut', 'f-dept': 'dept', 'f-assigne': 'assigne', 'f-rappel': 'rappel' }[id];
+    filters[key] = e.target.value;
+    currentPage = 0;
+    loadPage();
+  });
+});
+
+document.getElementById('btn-reset').addEventListener('click', resetFilters);
+
+// ─────────────────────────────────────────────
+// REALTIME
+// ─────────────────────────────────────────────
+function initRealtime() {
+  const dot = document.getElementById('realtime-dot');
+  const channel = db.channel('landscapers-crm')
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'landscapers' }, () => {
+      loadStats();
+    })
+    .subscribe(status => {
+      dot.classList.toggle('connected', status === 'SUBSCRIBED');
+    });
+}
+
+// ─────────────────────────────────────────────
+// BOOT
+// ─────────────────────────────────────────────
+(async function init() {
+  if (SUPABASE_ANON_KEY === 'VOTRE_CLE_ANON_ICI') {
+    showError('⚠ Configurez SUPABASE_ANON_KEY dans crm/index.html (Supabase Dashboard > Settings > API > anon public key)');
+    showLoader(false);
+    return;
+  }
+  await Promise.all([loadStats(), loadFilterOptions()]);
+  await loadPage();
+  initRealtime();
+})();
+</script>
+</body>
+</html>
