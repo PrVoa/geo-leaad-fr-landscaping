@@ -255,9 +255,95 @@
     display: none;
   }
   #error-msg.visible { display: block; }
+
+  /* ── LOGIN OVERLAY ── */
+  #login-overlay {
+    position: fixed; inset: 0;
+    background: linear-gradient(135deg, #1e3a5f 0%, #2d6a4f 100%);
+    display: flex; align-items: center; justify-content: center;
+    z-index: 9999;
+  }
+  #login-overlay.hidden { display: none; }
+  .login-card {
+    background: var(--card);
+    border-radius: 14px;
+    padding: 40px 36px;
+    width: 100%; max-width: 380px;
+    box-shadow: 0 20px 60px rgba(0,0,0,.3);
+    text-align: center;
+  }
+  .login-card h2 { font-size: 1.4rem; margin-bottom: 6px; }
+  .login-card p  { color: var(--muted); font-size: .88rem; margin-bottom: 28px; }
+  .login-form-group { display: flex; flex-direction: column; gap: 12px; }
+  .login-form-group input {
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 10px 14px;
+    font-size: .9rem;
+    font-family: inherit;
+    outline: none;
+    transition: border-color .2s;
+  }
+  .login-form-group input:focus { border-color: var(--primary); }
+  #login-btn {
+    margin-top: 6px;
+    background: var(--primary);
+    color: #fff;
+    border: none;
+    border-radius: 8px;
+    padding: 11px;
+    font-size: .95rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: background .15s;
+  }
+  #login-btn:hover { background: #2563eb; }
+  #login-btn:disabled { background: #93c5fd; cursor: default; }
+  #login-error {
+    margin-top: 12px;
+    color: var(--danger);
+    font-size: .82rem;
+    min-height: 18px;
+  }
+
+  /* ── USER INFO (header) ── */
+  #user-info {
+    display: flex; align-items: center; gap: 10px; margin-left: auto; flex-shrink: 0;
+  }
+  #user-name {
+    font-size: .82rem; color: var(--muted); font-weight: 500;
+  }
+  #btn-logout {
+    font-size: .78rem;
+    background: none;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 4px 10px;
+    cursor: pointer;
+    color: var(--muted);
+    transition: all .15s;
+  }
+  #btn-logout:hover { background: #fef2f2; border-color: var(--danger); color: var(--danger); }
 </style>
 </head>
 <body>
+
+<!-- ── LOGIN OVERLAY ── -->
+<div id="login-overlay">
+  <div class="login-card">
+    <h2>🌿 CRM Paysagistes</h2>
+    <p>Connectez-vous pour accéder au CRM</p>
+    <div class="login-form-group">
+      <input type="email"    id="login-email" placeholder="Email" autocomplete="email" required />
+      <input type="password" id="login-pwd"   placeholder="Mot de passe" autocomplete="current-password" required />
+      <button id="login-btn">Se connecter</button>
+    </div>
+    <div id="login-error"></div>
+  </div>
+</div>
+
+<!-- ── CRM ── -->
+<div id="crm-app" style="display:none">
 
 <header>
   <h1>🌿 CRM Paysagistes</h1>
@@ -269,6 +355,10 @@
     <span class="stat-chip interesse" id="s-interesse">—</span>
     <span class="stat-chip client"    id="s-client">—</span>
     <span class="stat-chip perdu"     id="s-perdu">—</span>
+  </div>
+  <div id="user-info">
+    <span id="user-name"></span>
+    <button id="btn-logout">Déconnexion</button>
   </div>
   <div id="realtime-dot" title="Sync temps réel"></div>
 </header>
@@ -321,6 +411,7 @@
   <span id="page-info"></span>
   <button class="page-btn" id="btn-next" disabled>Suiv. →</button>
 </div>
+</div><!-- /crm-app -->
 
 <script>
 // ─────────────────────────────────────────────
@@ -342,6 +433,65 @@ const db = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
 // Indique si les colonnes CRM (migration) sont disponibles
 let crmColumnsAvailable = false;
+
+// Utilisateur connecté
+let currentUser = null;
+
+// ─────────────────────────────────────────────
+// AUTH — LOGIN / LOGOUT
+// ─────────────────────────────────────────────
+function showLogin() {
+  document.getElementById('login-overlay').classList.remove('hidden');
+  document.getElementById('crm-app').style.display = 'none';
+}
+
+function showCRM(user) {
+  currentUser = user;
+  document.getElementById('login-overlay').classList.add('hidden');
+  document.getElementById('crm-app').style.display = 'block';
+
+  const name = user.user_metadata?.name || user.email;
+  document.getElementById('user-name').textContent = name;
+}
+
+document.getElementById('login-btn').addEventListener('click', async () => {
+  const email = document.getElementById('login-email').value.trim();
+  const pwd   = document.getElementById('login-pwd').value;
+  const errEl = document.getElementById('login-error');
+  const btn   = document.getElementById('login-btn');
+
+  errEl.textContent = '';
+  if (!email || !pwd) { errEl.textContent = 'Email et mot de passe requis.'; return; }
+
+  btn.disabled = true;
+  btn.textContent = 'Connexion…';
+
+  const { data, error } = await db.auth.signInWithPassword({ email, password: pwd });
+
+  btn.disabled = false;
+  btn.textContent = 'Se connecter';
+
+  if (error) {
+    errEl.textContent = error.message === 'Invalid login credentials'
+      ? 'Email ou mot de passe incorrect.'
+      : error.message;
+    return;
+  }
+
+  showCRM(data.user);
+  await startCRM();
+});
+
+// Entrée clavier dans le champ mot de passe
+document.getElementById('login-pwd').addEventListener('keydown', e => {
+  if (e.key === 'Enter') document.getElementById('login-btn').click();
+});
+
+document.getElementById('btn-logout').addEventListener('click', async () => {
+  await db.auth.signOut();
+  currentUser = null;
+  showLogin();
+});
 
 // ─────────────────────────────────────────────
 // STATE
@@ -471,7 +621,8 @@ function renderRappel(r) {
 }
 
 function renderAssign(r) {
-  return `<input type="text" class="assign-input" data-id="${esc(r.place_id)}" value="${esc(r.assigne_a || '')}" placeholder="—" />`;
+  const val = r.assigne_a || (currentUser ? currentUser.email : '');
+  return `<input type="text" class="assign-input" data-id="${esc(r.place_id)}" value="${esc(val)}" placeholder="${esc(currentUser ? currentUser.email : '—')}" />`;
 }
 
 function renderLinks(r) {
@@ -726,32 +877,50 @@ async function checkMigration() {
 }
 
 // ─────────────────────────────────────────────
-// BOOT
+// DÉMARRER LE CRM (après login)
 // ─────────────────────────────────────────────
-(async function init() {
-  if (!SUPABASE_ANON_KEY || SUPABASE_ANON_KEY === 'VOTRE_CLE_ANON_ICI') {
-    showError('⚠ Configurez SUPABASE_ANON_KEY dans crm/index.html (Supabase Dashboard > Settings > API > anon public key)');
-    showLoader(false);
-    return;
-  }
-
+async function startCRM() {
   try {
-    // 1. Vérifie si la migration a été exécutée
     await checkMigration();
-
-    // 2. Charge stats + filtres en parallèle (non bloquant)
     await Promise.allSettled([loadStats(), loadFilterOptions()]);
-
-    // 3. Charge la première page
     await loadPage();
-
-    // 4. Active le Realtime
     initRealtime();
   } catch (err) {
     showLoader(false);
     showError('Erreur de connexion Supabase : ' + (err.message || err));
-    console.error('[CRM] Erreur init :', err);
+    console.error('[CRM] Erreur startCRM :', err);
   }
+}
+
+// ─────────────────────────────────────────────
+// BOOT
+// ─────────────────────────────────────────────
+(async function init() {
+  if (!SUPABASE_ANON_KEY || SUPABASE_ANON_KEY === 'VOTRE_CLE_ANON_ICI') {
+    // Pas de login-overlay, montrer erreur directement
+    document.getElementById('login-overlay').classList.add('hidden');
+    document.getElementById('crm-app').style.display = 'block';
+    showLoader(false);
+    showError('⚠ Configurez SUPABASE_ANON_KEY dans crm/index.html (Supabase Dashboard > Settings > API > anon public key)');
+    return;
+  }
+
+  // Vérifier si une session existe déjà (refresh de page)
+  const { data: { session } } = await db.auth.getSession();
+  if (session?.user) {
+    showCRM(session.user);
+    await startCRM();
+  } else {
+    showLogin();
+  }
+
+  // Écouter les changements de session (expiration, etc.)
+  db.auth.onAuthStateChange((event, session) => {
+    if (event === 'SIGNED_OUT' || !session) {
+      currentUser = null;
+      showLogin();
+    }
+  });
 })();
 </script>
 </body>

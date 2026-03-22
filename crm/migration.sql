@@ -45,13 +45,19 @@ AS $$
   ORDER BY assigne_a;
 $$;
 
--- RLS : autoriser la lecture/écriture anonyme (à restreindre en prod)
+-- RLS : accès en lecture/écriture pour les utilisateurs authentifiés
 ALTER TABLE landscapers ENABLE ROW LEVEL SECURITY;
 
+-- Lecture
 DROP POLICY IF EXISTS crm_anon_select ON landscapers;
-CREATE POLICY crm_anon_select ON landscapers
-  FOR SELECT TO anon USING (true);
+DROP POLICY IF EXISTS crm_auth_select ON landscapers;
+CREATE POLICY crm_auth_select ON landscapers
+  FOR SELECT TO authenticated USING (true);
 
+-- Écriture (mise à jour des champs CRM)
 DROP POLICY IF EXISTS crm_anon_update ON landscapers;
-CREATE POLICY crm_anon_update ON landscapers
-  FOR UPDATE TO anon USING (true) WITH CHECK (true);
+DROP POLICY IF EXISTS crm_auth_update ON landscapers;
+CREATE POLICY crm_auth_update ON landscapers
+  FOR UPDATE TO authenticated USING (true) WITH CHECK (true);
+
+-- Note : le scraper Python utilise le service_role (bypass RLS), pas besoin de policy INSERT/DELETE ici.
