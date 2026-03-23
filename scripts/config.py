@@ -170,9 +170,7 @@ MOTS_EXCLUS = [
 # Termes de recherche Google Maps (scraper boucle sur tous)
 MOTS_CLES_RECHERCHE: list[str] = [
     "paysagiste",
-    "aménagement paysager",
     "jardinier paysagiste",
-    "création jardin",
 ]
 
 # Qualification ICP — signaux "gros projets / création"
