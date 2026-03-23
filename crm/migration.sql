@@ -61,3 +61,16 @@ CREATE POLICY crm_auth_update ON landscapers
   FOR UPDATE TO authenticated USING (true) WITH CHECK (true);
 
 -- Note : le scraper Python utilise le service_role (bypass RLS), pas besoin de policy INSERT/DELETE ici.
+
+-- ============================================================
+-- Migration ICP — Qualification paysagistes
+-- ============================================================
+
+ALTER TABLE landscapers
+  ADD COLUMN IF NOT EXISTS type_activite TEXT,      -- creation | entretien | mixte | inconnu
+  ADD COLUMN IF NOT EXISTS score_icp     INTEGER,   -- 0-100
+  ADD COLUMN IF NOT EXISTS mots_detectes TEXT;      -- mots-clés ICP détectés
+
+-- Index pour filtrer par score et type dans le CRM
+CREATE INDEX IF NOT EXISTS idx_landscapers_score_icp     ON landscapers(score_icp);
+CREATE INDEX IF NOT EXISTS idx_landscapers_type_activite ON landscapers(type_activite);

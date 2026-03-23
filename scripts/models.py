@@ -20,6 +20,9 @@ class Landscaper(Base):
     review_count = Column(Integer, nullable=True)
     maps_url     = Column(Text, nullable=True)
     scraped_at   = Column(DateTime, default=datetime.utcnow)
+    type_activite = Column(Text, nullable=True)   # creation | entretien | mixte | inconnu
+    score_icp     = Column(Integer, nullable=True) # 0-100 : correspondance ICP
+    mots_detectes = Column(Text, nullable=True)   # mots-clés ICP trouvés (comma-separated)
 
 
 class VilleProgress(Base):

@@ -11,7 +11,10 @@ from playwright.async_api import Page
 from sqlalchemy.ext.asyncio import AsyncSession
 
 import config
-from config import log, MIN_DELAY, MAX_DELAY, MIN_DELAY_FICHE, MAX_DELAY_FICHE, MOTS_EXCLUS
+from config import (
+    log, MIN_DELAY, MAX_DELAY, MIN_DELAY_FICHE, MAX_DELAY_FICHE, MOTS_EXCLUS,
+    MOTS_CLES_RECHERCHE, MOTS_ICP_CREATION, MOTS_ICP_ENTRETIEN,
+)
 from models import Landscaper
 
 
@@ -156,6 +159,65 @@ def _valider_email(raw: str) -> str | None:
     return email
 
 
+def analyser_html_icp(html: str) -> tuple[str, list[str]]:
+    """Analyse le HTML et retourne (type_activite, mots_detectes)."""
+    html_lower = html.lower()
+    found_creation  = [m for m in MOTS_ICP_CREATION  if m in html_lower]
+    found_entretien = [m for m in MOTS_ICP_ENTRETIEN if m in html_lower]
+
+    if found_creation and found_entretien:
+        type_activite = "mixte"
+    elif found_creation:
+        type_activite = "creation"
+    elif found_entretien:
+        type_activite = "entretien"
+    else:
+        type_activite = "inconnu"
+
+    return type_activite, found_creation + found_entretien
+
+
+def calculer_score_icp(
+    name: str | None,
+    website: str | None,
+    email: str | None,
+    review_count: int | None,
+    rating: float | None,
+    type_activite: str,
+) -> int:
+    """Score 0-100 : correspondance avec l'ICP (indépendant, gros projets)."""
+    score = 50
+
+    if website:
+        score += 10
+    if email:
+        score += 10
+
+    if type_activite == "creation":
+        score += 25
+    elif type_activite == "mixte":
+        score += 10
+    elif type_activite == "entretien":
+        score -= 15
+
+    if review_count is not None:
+        if 5 <= review_count <= 80:
+            score += 15   # indépendant actif
+        elif review_count > 200:
+            score -= 20   # trop grosse structure
+        elif review_count < 3:
+            score -= 5    # trop récent / peu actif
+
+    if rating and rating >= 4.0:
+        score += 5
+
+    if name:
+        if any(kw in name.lower() for kw in ("groupe", " services", "solutions", "multiservices")):
+            score -= 10
+
+    return max(0, min(100, score))
+
+
 async def _chercher_emails_sur_page(page: Page) -> str | None:
     """Cherche un email sur la page courante : d'abord les liens mailto, puis regex HTML."""
     # Méthode 1 : liens mailto (les plus fiables)
@@ -184,14 +246,15 @@ async def _chercher_emails_sur_page(page: Page) -> str | None:
     return None
 
 
-async def extraire_email(page: Page, website: str) -> str | None:
+async def analyser_site_web(
+    page: Page, website: str
+) -> tuple[str | None, str, list[str]]:
     """
-    Visite le site web du paysagiste et extrait son adresse email.
-    Cherche sur la page d'accueil, puis sur les pages de contact courantes.
-    Retourne None si aucun email trouvé ou si le site est inaccessible.
+    Visite le site web et retourne (email, type_activite, mots_detectes).
+    Combine extraction email + analyse ICP en un seul passage.
     """
     if not website:
-        return None
+        return None, "inconnu", []
 
     base = website.rstrip("/")
     pages_a_tester = [website] + [
@@ -201,30 +264,45 @@ async def extraire_email(page: Page, website: str) -> str | None:
         )
     ]
 
+    email: str | None = None
+    type_activite = "inconnu"
+    mots_detectes: list[str] = []
+
     try:
         for i, url in enumerate(pages_a_tester):
             try:
                 resp = await page.goto(url, wait_until="domcontentloaded", timeout=8000)
-                # Ne pas chercher sur les pages 404/500
                 if resp and resp.status >= 400:
                     continue
                 await asyncio.sleep(0.3)
-                email = await _chercher_emails_sur_page(page)
-                if email:
-                    log.debug(f"  Email trouvé sur {url} : {email}")
-                    return email
-                # Sur la page d'accueil : si aucun email et pas de site /contact
-                # évident, on ne charge pas toutes les pages contact inutilement
-                if i == 0 and not any(kw in (await page.content()).lower() for kw in ("contact", "mail", "@")):
+
+                html = await page.content()
+
+                if email is None:
+                    email = await _chercher_emails_sur_page(page)
+                    if email:
+                        log.debug(f"  Email trouvé sur {url} : {email}")
+
+                # Analyse ICP uniquement sur la page d'accueil (plus représentatif)
+                if i == 0:
+                    type_activite, mots_detectes = analyser_html_icp(html)
+
+                # Dès qu'on a l'email depuis la homepage, on s'arrête
+                if email and i == 0:
+                    break
+
+                # Pas d'indice d'email sur la homepage → skip pages contact
+                if i == 0 and not any(kw in html.lower() for kw in ("contact", "mail", "@")):
                     log.debug(f"  Pas d'indice d'email sur {url}, pages contact ignorées")
                     break
+
             except Exception as exc:
-                log.debug(f"  extraire_email({url!r}) : {exc}")
+                log.debug(f"  analyser_site_web({url!r}) : {exc}")
                 continue
     except Exception as exc:
-        log.debug(f"  extraire_email global ({website!r}) : {exc}")
+        log.debug(f"  analyser_site_web global ({website!r}) : {exc}")
 
-    return None
+    return email, type_activite, mots_detectes
 
 
 async def extraire_rating(page: Page) -> tuple[float | None, int | None]:
@@ -321,8 +399,9 @@ async def _scraper_fiche_once(page: Page, place_id: str, session: AsyncSession) 
     address = await extraire_champ(page, ["address", "adresse"])
     rating, review_count = await extraire_rating(page)
 
-    # Visite le site web pour chercher un email (page revient ensuite sur Maps)
-    email = await extraire_email(page, website)
+    # Visite le site web : email + analyse ICP
+    email, type_activite, mots_detectes = await analyser_site_web(page, website)
+    score_icp = calculer_score_icp(name, website, email, review_count, rating, type_activite)
 
     if not config.DRY_RUN:
         obj = Landscaper(
@@ -336,15 +415,18 @@ async def _scraper_fiche_once(page: Page, place_id: str, session: AsyncSession) 
             review_count=review_count,
             maps_url=f"https://www.google.fr/maps/place/?q=place_id:{place_id}",
             scraped_at=datetime.utcnow(),
+            type_activite=type_activite,
+            score_icp=score_icp,
+            mots_detectes=", ".join(mots_detectes) if mots_detectes else None,
         )
         session.add(obj)
         await session.commit()
 
     log.info(
         f"  {'[DRY] ' if config.DRY_RUN else ''}OK {name} | "
-        f"{phone or '-'} | "
-        f"{email or '-'} | "
+        f"{phone or '-'} | {email or '-'} | "
         f"★{rating or '-'} ({review_count or 0} avis) | "
+        f"ICP:{score_icp} [{type_activite}] | "
         f"{website or '-'}"
     )
     return True
@@ -453,38 +535,63 @@ async def scraper_ville_gen(
     session: AsyncSession,
 ):
     """
-    Async generator : scrape une ville entière jusqu'à épuisement.
+    Async generator : scrape une ville avec tous les termes de MOTS_CLES_RECHERCHE.
+    Déduplique les place_ids entre les recherches.
     Yields 1 pour chaque fiche enregistrée avec succès.
     Lève BlocageDetecte si Google bloque (le scheduler gère le retry).
     """
-    log.info(f"Recherche : paysagiste {ville}")
-    try:
-        await page.goto(
-            f"https://www.google.fr/maps/search/paysagiste+{quote_plus(ville)}",
-            wait_until="domcontentloaded",
-            timeout=30000,
-        )
-        await asyncio.sleep(1.5)
-        await accepter_cookies(page)
+    all_pids: list[str] = []
+    seen_pids: set[str] = set()
 
-        if await detecter_blocage(page):
-            raise BlocageDetecte(f"Blocage sur la recherche {ville!r}")
-
+    for j, mot_cle in enumerate(MOTS_CLES_RECHERCHE):
+        log.info(f"Recherche : {mot_cle} {ville}")
         try:
-            await page.wait_for_selector("a[href*='/maps/place/']", timeout=10000)
-        except Exception:
-            log.warning(f"  Aucun résultat chargé pour {ville} (timeout)")
-            return  # termine le générateur proprement
+            await page.goto(
+                f"https://www.google.fr/maps/search/{quote_plus(mot_cle)}+{quote_plus(ville)}",
+                wait_until="domcontentloaded",
+                timeout=30000,
+            )
+            await asyncio.sleep(1.5)
+            if j == 0:
+                await accepter_cookies(page)
 
-        await scroll_jusqu_epuisement(page)
+            if await detecter_blocage(page):
+                raise BlocageDetecte(f"Blocage sur la recherche {ville!r}")
 
-        hrefs = await page.eval_on_selector_all(
-            "a[href*='/maps/place/']", "els => els.map(e => e.href)"
-        )
-        pids = _extraire_place_ids(hrefs)
-        log.info(f"  {len(pids)} fiches trouvées pour {ville}")
+            try:
+                await page.wait_for_selector("a[href*='/maps/place/']", timeout=10000)
+            except Exception:
+                log.warning(f"  Aucun résultat pour '{mot_cle} {ville}'")
+                continue
 
-        for pid in pids:
+            await scroll_jusqu_epuisement(page)
+
+            hrefs = await page.eval_on_selector_all(
+                "a[href*='/maps/place/']", "els => els.map(e => e.href)"
+            )
+            pids = _extraire_place_ids(hrefs)
+            new_pids = [p for p in pids if p not in seen_pids]
+            seen_pids.update(new_pids)
+            all_pids.extend(new_pids)
+            log.info(
+                f"  {len(new_pids)} nouvelles fiches "
+                f"({len(pids) - len(new_pids)} doublons) pour '{mot_cle} {ville}'"
+            )
+
+            # Pause entre les termes (plus courte qu'entre villes)
+            if j < len(MOTS_CLES_RECHERCHE) - 1:
+                await asyncio.sleep(random.uniform(3, 5))
+
+        except BlocageDetecte:
+            raise
+        except Exception as exc:
+            log.error(f"  Erreur sur '{mot_cle} {ville}' : {exc}", exc_info=True)
+            continue
+
+    log.info(f"  Total : {len(all_pids)} fiches uniques pour {ville}")
+
+    try:
+        for pid in all_pids:
             if not config.DRY_RUN:
                 existing = await session.get(Landscaper, pid)
                 if existing:
@@ -498,4 +605,4 @@ async def scraper_ville_gen(
         raise
     except Exception as exc:
         log.error(f"  Erreur inattendue sur {ville} : {exc}", exc_info=True)
-        return  # termine le générateur sans planter le scheduler
+        return
