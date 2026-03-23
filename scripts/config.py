@@ -167,21 +167,7 @@ MOTS_EXCLUS = [
     "metro", "bus", "tram", "supermarche", "carrefour", "leclerc",
 ]
 
-# Termes de recherche Google Maps (scraper boucle sur tous)
+# Termes de recherche Google Maps (un seul pour rester précis)
 MOTS_CLES_RECHERCHE: list[str] = [
     "paysagiste",
-    "jardinier paysagiste",
-]
-
-# Qualification ICP — signaux "gros projets / création"
-MOTS_ICP_CREATION: list[str] = [
-    "création", "aménagement", "terrassement", "terrasse", "pergola",
-    "clôture", "allée", "dallage", "bassin", "piscine", "engazonnement",
-    "conception", "réalisation", "maçonnerie", "semis", "plantation",
-]
-
-# Qualification ICP — signaux "entretien uniquement"
-MOTS_ICP_ENTRETIEN: list[str] = [
-    "tonte", "taille", "débroussaillage", "nettoyage",
-    "ramassage", "désherbage", "contrat entretien",
 ]

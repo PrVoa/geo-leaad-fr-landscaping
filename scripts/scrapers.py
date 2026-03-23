@@ -11,10 +11,7 @@ from playwright.async_api import Page
 from sqlalchemy.ext.asyncio import AsyncSession
 
 import config
-from config import (
-    log, MIN_DELAY, MAX_DELAY, MIN_DELAY_FICHE, MAX_DELAY_FICHE, MOTS_EXCLUS,
-    MOTS_CLES_RECHERCHE, MOTS_ICP_CREATION, MOTS_ICP_ENTRETIEN,
-)
+from config import log, MIN_DELAY, MAX_DELAY, MIN_DELAY_FICHE, MAX_DELAY_FICHE, MOTS_EXCLUS, MOTS_CLES_RECHERCHE
 from models import Landscaper
 
 
@@ -159,65 +156,6 @@ def _valider_email(raw: str) -> str | None:
     return email
 
 
-def analyser_html_icp(html: str) -> tuple[str, list[str]]:
-    """Analyse le HTML et retourne (type_activite, mots_detectes)."""
-    html_lower = html.lower()
-    found_creation  = [m for m in MOTS_ICP_CREATION  if m in html_lower]
-    found_entretien = [m for m in MOTS_ICP_ENTRETIEN if m in html_lower]
-
-    if found_creation and found_entretien:
-        type_activite = "mixte"
-    elif found_creation:
-        type_activite = "creation"
-    elif found_entretien:
-        type_activite = "entretien"
-    else:
-        type_activite = "inconnu"
-
-    return type_activite, found_creation + found_entretien
-
-
-def calculer_score_icp(
-    name: str | None,
-    website: str | None,
-    email: str | None,
-    review_count: int | None,
-    rating: float | None,
-    type_activite: str,
-) -> int:
-    """Score 0-100 : correspondance avec l'ICP (indépendant, gros projets)."""
-    score = 50
-
-    if website:
-        score += 10
-    if email:
-        score += 10
-
-    if type_activite == "creation":
-        score += 25
-    elif type_activite == "mixte":
-        score += 10
-    elif type_activite == "entretien":
-        score -= 15
-
-    if review_count is not None:
-        if 5 <= review_count <= 80:
-            score += 15   # indépendant actif
-        elif review_count > 200:
-            score -= 20   # trop grosse structure
-        elif review_count < 3:
-            score -= 5    # trop récent / peu actif
-
-    if rating and rating >= 4.0:
-        score += 5
-
-    if name:
-        if any(kw in name.lower() for kw in ("groupe", " services", "solutions", "multiservices")):
-            score -= 10
-
-    return max(0, min(100, score))
-
-
 async def _chercher_emails_sur_page(page: Page) -> str | None:
     """Cherche un email sur la page courante : d'abord les liens mailto, puis regex HTML."""
     # Méthode 1 : liens mailto (les plus fiables)
@@ -246,15 +184,10 @@ async def _chercher_emails_sur_page(page: Page) -> str | None:
     return None
 
 
-async def analyser_site_web(
-    page: Page, website: str
-) -> tuple[str | None, str, list[str]]:
-    """
-    Visite le site web et retourne (email, type_activite, mots_detectes).
-    Combine extraction email + analyse ICP en un seul passage.
-    """
+async def extraire_email(page: Page, website: str) -> str | None:
+    """Visite le site web et extrait l'email de contact."""
     if not website:
-        return None, "inconnu", []
+        return None
 
     base = website.rstrip("/")
     pages_a_tester = [website] + [
@@ -264,10 +197,6 @@ async def analyser_site_web(
         )
     ]
 
-    email: str | None = None
-    type_activite = "inconnu"
-    mots_detectes: list[str] = []
-
     try:
         for i, url in enumerate(pages_a_tester):
             try:
@@ -275,34 +204,20 @@ async def analyser_site_web(
                 if resp and resp.status >= 400:
                     continue
                 await asyncio.sleep(0.3)
-
-                html = await page.content()
-
-                if email is None:
-                    email = await _chercher_emails_sur_page(page)
-                    if email:
-                        log.debug(f"  Email trouvé sur {url} : {email}")
-
-                # Analyse ICP uniquement sur la page d'accueil (plus représentatif)
-                if i == 0:
-                    type_activite, mots_detectes = analyser_html_icp(html)
-
-                # Dès qu'on a l'email depuis la homepage, on s'arrête
-                if email and i == 0:
-                    break
-
-                # Pas d'indice d'email sur la homepage → skip pages contact
-                if i == 0 and not any(kw in html.lower() for kw in ("contact", "mail", "@")):
+                email = await _chercher_emails_sur_page(page)
+                if email:
+                    log.debug(f"  Email trouvé sur {url} : {email}")
+                    return email
+                if i == 0 and not any(kw in (await page.content()).lower() for kw in ("contact", "mail", "@")):
                     log.debug(f"  Pas d'indice d'email sur {url}, pages contact ignorées")
                     break
-
             except Exception as exc:
-                log.debug(f"  analyser_site_web({url!r}) : {exc}")
+                log.debug(f"  extraire_email({url!r}) : {exc}")
                 continue
     except Exception as exc:
-        log.debug(f"  analyser_site_web global ({website!r}) : {exc}")
+        log.debug(f"  extraire_email global ({website!r}) : {exc}")
 
-    return email, type_activite, mots_detectes
+    return None
 
 
 async def extraire_rating(page: Page) -> tuple[float | None, int | None]:
@@ -399,9 +314,8 @@ async def _scraper_fiche_once(page: Page, place_id: str, session: AsyncSession) 
     address = await extraire_champ(page, ["address", "adresse"])
     rating, review_count = await extraire_rating(page)
 
-    # Visite le site web : email + analyse ICP
-    email, type_activite, mots_detectes = await analyser_site_web(page, website)
-    score_icp = calculer_score_icp(name, website, email, review_count, rating, type_activite)
+    # Visite le site web pour chercher un email
+    email = await extraire_email(page, website)
 
     if not config.DRY_RUN:
         obj = Landscaper(
@@ -415,18 +329,15 @@ async def _scraper_fiche_once(page: Page, place_id: str, session: AsyncSession) 
             review_count=review_count,
             maps_url=f"https://www.google.fr/maps/place/?q=place_id:{place_id}",
             scraped_at=datetime.utcnow(),
-            type_activite=type_activite,
-            score_icp=score_icp,
-            mots_detectes=", ".join(mots_detectes) if mots_detectes else None,
         )
         session.add(obj)
         await session.commit()
 
     log.info(
         f"  {'[DRY] ' if config.DRY_RUN else ''}OK {name} | "
-        f"{phone or '-'} | {email or '-'} | "
+        f"{phone or '-'} | "
+        f"{email or '-'} | "
         f"★{rating or '-'} ({review_count or 0} avis) | "
-        f"ICP:{score_icp} [{type_activite}] | "
         f"{website or '-'}"
     )
     return True
