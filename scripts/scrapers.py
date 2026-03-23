@@ -204,11 +204,11 @@ async def extraire_email(page: Page, website: str) -> str | None:
     try:
         for i, url in enumerate(pages_a_tester):
             try:
-                resp = await page.goto(url, wait_until="domcontentloaded", timeout=12000)
+                resp = await page.goto(url, wait_until="domcontentloaded", timeout=8000)
                 # Ne pas chercher sur les pages 404/500
                 if resp and resp.status >= 400:
                     continue
-                await asyncio.sleep(0.8)
+                await asyncio.sleep(0.3)
                 email = await _chercher_emails_sur_page(page)
                 if email:
                     log.debug(f"  Email trouvé sur {url} : {email}")
@@ -293,7 +293,7 @@ async def _scraper_fiche_once(page: Page, place_id: str, session: AsyncSession) 
         wait_until="domcontentloaded",
         timeout=25000,
     )
-    await asyncio.sleep(random.uniform(1.5, 2.5))
+    await asyncio.sleep(random.uniform(0.8, 1.5))
 
     if await detecter_blocage(page):
         raise BlocageDetecte(f"Blocage sur place_id={place_id}")
@@ -464,7 +464,7 @@ async def scraper_ville_gen(
             wait_until="domcontentloaded",
             timeout=30000,
         )
-        await asyncio.sleep(3)
+        await asyncio.sleep(1.5)
         await accepter_cookies(page)
 
         if await detecter_blocage(page):
