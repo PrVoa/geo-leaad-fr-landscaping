@@ -11,7 +11,7 @@ from playwright.async_api import Page
 from sqlalchemy.ext.asyncio import AsyncSession
 
 import config
-from config import log, MIN_DELAY, MAX_DELAY, MIN_DELAY_FICHE, MAX_DELAY_FICHE, MOTS_EXCLUS, MOTS_CLES_RECHERCHE
+from config import log, MIN_DELAY, MAX_DELAY, MIN_DELAY_FICHE, MAX_DELAY_FICHE, MOTS_EXCLUS, MOTS_CLES_RECHERCHE, CATEGORIES_EXCLUES
 from models import Landscaper
 
 
@@ -77,6 +77,24 @@ async def detecter_blocage(page: Page) -> bool:
     except Exception:
         pass
     return False
+
+
+async def extraire_categorie(page: Page) -> str | None:
+    """Extrait la catégorie affichée sous le nom sur Google Maps."""
+    for sel in [
+        "button[jsaction*='category']",
+        "span[jstcache] > button",
+        "div[role='main'] button[aria-label]",
+    ]:
+        try:
+            el = page.locator(sel).first
+            if await el.is_visible(timeout=1500):
+                t = (await el.inner_text()).strip()
+                if t and len(t) < 60:
+                    return t.lower()
+        except Exception:
+            continue
+    return None
 
 
 async def extraire_texte(page: Page, selector: str) -> str | None:
@@ -307,6 +325,12 @@ async def _scraper_fiche_once(page: Page, place_id: str, session: AsyncSession) 
         return False
     if any(mot in name.lower() for mot in MOTS_EXCLUS):
         log.info(f"  Ignoré (hors-sujet) : {name}")
+        return False
+
+    # Filtre sur la catégorie Google Maps (ex: "Association" → skip)
+    categorie = await extraire_categorie(page)
+    if categorie and any(c in categorie for c in CATEGORIES_EXCLUES):
+        log.info(f"  Ignoré (catégorie '{categorie}') : {name}")
         return False
 
     phone   = clean_phone(await extraire_champ(page, ["phone", "telephone"]))

@@ -167,6 +167,17 @@ MOTS_EXCLUS = [
     "metro", "bus", "tram", "supermarche", "carrefour", "leclerc",
 ]
 
+# Catégories Google Maps à exclure (affiché sous le nom de l'établissement)
+CATEGORIES_EXCLUES: list[str] = [
+    "association", "ong", "organisation à but non lucratif",
+    "administration", "mairie", "collectivité", "syndicat",
+    "école", "université", "lycée", "collège", "formation",
+    "architecte", "bureau d'études", "cabinet",
+    "photographe", "château", "hôtel", "camping", "gîte",
+    "pépinière", "jardinerie", "animalerie", "fleuriste",
+    "grande surface", "magasin",
+]
+
 # Termes de recherche Google Maps (un seul pour rester précis)
 MOTS_CLES_RECHERCHE: list[str] = [
     "paysagiste",
