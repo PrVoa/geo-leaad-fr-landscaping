@@ -20,6 +20,7 @@ class Landscaper(Base):
     review_count = Column(Integer, nullable=True)
     maps_url     = Column(Text, nullable=True)
     scraped_at   = Column(DateTime, default=datetime.utcnow)
+    categorie    = Column(Text, nullable=True)   # catégorie Google Maps (ex: "Paysagiste")
 
 
 class VilleProgress(Base):

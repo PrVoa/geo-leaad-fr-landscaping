@@ -327,11 +327,14 @@ async def _scraper_fiche_once(page: Page, place_id: str, session: AsyncSession) 
         log.info(f"  Ignoré (hors-sujet) : {name}")
         return False
 
-    # Filtre sur la catégorie Google Maps (ex: "Association" → skip)
+    # Filtre sur la catégorie Google Maps
+    # Règle : si la catégorie contient "paysagiste" → toujours garder
+    # Sinon → exclure si elle correspond à une catégorie hors-cible
     categorie = await extraire_categorie(page)
-    if categorie and any(c in categorie for c in CATEGORIES_EXCLUES):
-        log.info(f"  Ignoré (catégorie '{categorie}') : {name}")
-        return False
+    if categorie and "paysagiste" not in categorie:
+        if any(c in categorie for c in CATEGORIES_EXCLUES):
+            log.info(f"  Ignoré (catégorie '{categorie}') : {name}")
+            return False
 
     phone   = clean_phone(await extraire_champ(page, ["phone", "telephone"]))
     website = await extraire_website(page)
@@ -353,6 +356,7 @@ async def _scraper_fiche_once(page: Page, place_id: str, session: AsyncSession) 
             review_count=review_count,
             maps_url=f"https://www.google.fr/maps/place/?q=place_id:{place_id}",
             scraped_at=datetime.utcnow(),
+            categorie=categorie,
         )
         session.add(obj)
         await session.commit()
