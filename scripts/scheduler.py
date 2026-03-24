@@ -181,9 +181,12 @@ async def lancer_scraping(depts: list[str], objectif: int) -> int:
                                     if total_run % 10 == 0:
                                         await afficher_stats(s, run_start, total_run, objectif)
 
-                            async with SL() as s:
-                                await marquer_ville_done(s, dept, ville, ville_count)
-                            log.info(f"  {ville} terminée — {ville_count} fiche(s)")
+                            if ville_count > 0:
+                                async with SL() as s:
+                                    await marquer_ville_done(s, dept, ville, ville_count)
+                                log.info(f"  {ville} terminée — {ville_count} fiche(s)")
+                            else:
+                                log.warning(f"  {ville} — 0 résultat (possible blocage), laissée en pending")
                             break  # succès → passe à la ville suivante
 
                         except BlocageDetecte:
@@ -232,9 +235,12 @@ async def lancer_scraping(depts: list[str], objectif: int) -> int:
                                 if total_run % 10 == 0:
                                     await afficher_stats(s, run_start, total_run, objectif)
 
-                        async with SL() as s:
-                            await marquer_ville_done(s, dept, ville, ville_count)
-                        log.info(f"  {ville} récupérée — {ville_count} fiche(s)")
+                        if ville_count > 0:
+                            async with SL() as s:
+                                await marquer_ville_done(s, dept, ville, ville_count)
+                            log.info(f"  {ville} récupérée — {ville_count} fiche(s)")
+                        else:
+                            log.warning(f"  {ville} — 0 résultat en reprise, laissée en pending")
 
                     except BlocageDetecte:
                         log.error(
