@@ -175,7 +175,7 @@ async def lancer_scraping(depts: list[str], objectif: int) -> int:
                     while True:  # boucle retry CAPTCHA
                         try:
                             async with SL() as s:
-                                async for _ in scraper_ville_gen(page, ville, s):
+                                async for _ in scraper_ville_gen(page, ville, s, dept=dept):
                                     total_run += 1
                                     ville_count += 1
                                     if total_run % 10 == 0:
@@ -229,7 +229,7 @@ async def lancer_scraping(depts: list[str], objectif: int) -> int:
                     ville_count = 0
                     try:
                         async with SL() as s:
-                            async for _ in scraper_ville_gen(page, ville, s):
+                            async for _ in scraper_ville_gen(page, ville, s, dept=dept):
                                 total_run += 1
                                 ville_count += 1
                                 if total_run % 10 == 0:

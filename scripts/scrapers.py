@@ -297,7 +297,7 @@ async def extraire_rating(page: Page) -> tuple[float | None, int | None]:
 # Scraping d'une fiche individuelle
 # ---------------------------------------------------------------------------
 
-async def _scraper_fiche_once(page: Page, place_id: str, session: AsyncSession) -> bool:
+async def _scraper_fiche_once(page: Page, place_id: str, session: AsyncSession, dept: str | None = None) -> bool:
     """Tente une fois. Retourne True si enregistré. Lève sur erreur."""
     await page.goto(
         f"https://www.google.fr/maps/place/?q=place_id:{place_id}",
@@ -357,6 +357,7 @@ async def _scraper_fiche_once(page: Page, place_id: str, session: AsyncSession) 
             maps_url=f"https://www.google.fr/maps/place/?q=place_id:{place_id}",
             scraped_at=datetime.utcnow(),
             categorie=categorie,
+            dept=dept,
         )
         session.add(obj)
         await session.commit()
@@ -376,11 +377,12 @@ async def scraper_fiche(
     place_id: str,
     session: AsyncSession,
     max_retries: int = 2,
+    dept: str | None = None,
 ) -> bool:
     """Scrape une fiche avec retry automatique sur erreur réseau/timeout."""
     for attempt in range(max_retries + 1):
         try:
-            return await _scraper_fiche_once(page, place_id, session)
+            return await _scraper_fiche_once(page, place_id, session, dept=dept)
         except BlocageDetecte:
             raise  # Ne jamais retenter si Google a bloqué
         except Exception as exc:
@@ -472,6 +474,7 @@ async def scraper_ville_gen(
     page: Page,
     ville: str,
     session: AsyncSession,
+    dept: str | None = None,
 ):
     """
     Async generator : scrape une ville avec tous les termes de MOTS_CLES_RECHERCHE.
@@ -536,7 +539,7 @@ async def scraper_ville_gen(
                 if existing:
                     log.debug(f"  Déjà en base, skip : {pid}")
                     continue
-            if await scraper_fiche(page, pid, session):
+            if await scraper_fiche(page, pid, session, dept=dept):
                 yield 1
             await pause_fiche()
 

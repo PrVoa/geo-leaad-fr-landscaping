@@ -21,6 +21,7 @@ class Landscaper(Base):
     maps_url     = Column(Text, nullable=True)
     scraped_at   = Column(DateTime, default=datetime.utcnow)
     categorie    = Column(Text, nullable=True)   # catégorie Google Maps (ex: "Paysagiste")
+    dept         = Column(Text, nullable=True)   # 2 premiers chiffres du code postal
 
 
 class VilleProgress(Base):
