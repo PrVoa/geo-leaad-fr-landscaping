@@ -16,7 +16,6 @@
     --muted: #718096;
     --primary: #3b82f6;
     --danger: #ef4444;
-
     --s-nouveau:   #94a3b8;
     --s-contacte:  #3b82f6;
     --s-interesse: #f97316;
@@ -30,23 +29,24 @@
   header {
     background: var(--card);
     border-bottom: 1px solid var(--border);
-    padding: 14px 24px;
+    padding: 12px 24px;
     display: flex;
     align-items: center;
-    gap: 24px;
+    gap: 16px;
     flex-wrap: wrap;
     position: sticky;
     top: 0;
     z-index: 100;
   }
   header h1 { font-size: 1.1rem; font-weight: 700; flex-shrink: 0; }
-  .stats-bar { display: flex; gap: 14px; flex-wrap: wrap; }
+  .stats-bar { display: flex; gap: 10px; flex-wrap: wrap; }
   .stat-chip {
-    font-size: .78rem;
+    font-size: .75rem;
     padding: 3px 10px;
     border-radius: 999px;
     font-weight: 600;
     border: 1px solid transparent;
+    cursor: pointer;
   }
   .stat-chip.total    { background: #e2e8f0; color: #475569; }
   .stat-chip.today    { background: #dbeafe; color: #1d4ed8; }
@@ -58,10 +58,18 @@
 
   #realtime-dot {
     width: 8px; height: 8px; border-radius: 50%;
-    background: #94a3b8; margin-left: auto; flex-shrink: 0;
+    background: #94a3b8; flex-shrink: 0;
     transition: background .4s;
   }
   #realtime-dot.connected { background: #22c55e; }
+
+  #user-info { display: flex; align-items: center; gap: 10px; margin-left: auto; flex-shrink: 0; }
+  #user-name { font-size: .82rem; color: var(--muted); font-weight: 500; }
+  #btn-logout {
+    font-size: .78rem; background: none; border: 1px solid var(--border);
+    border-radius: 6px; padding: 4px 10px; cursor: pointer; color: var(--muted); transition: all .15s;
+  }
+  #btn-logout:hover { background: #fef2f2; border-color: var(--danger); color: var(--danger); }
 
   /* ── FILTRES ── */
   #filters {
@@ -69,72 +77,91 @@
     border-bottom: 1px solid var(--border);
     padding: 10px 24px;
     display: flex;
-    gap: 10px;
+    gap: 8px;
     flex-wrap: wrap;
     align-items: center;
   }
-  #filters input, #filters select {
-    border: 1px solid var(--border);
-    border-radius: 6px;
-    padding: 6px 10px;
-    font-size: .85rem;
-    background: var(--bg);
-    color: var(--text);
-    outline: none;
-    transition: border-color .2s;
+  #filters input[type=search], #filters input[type=text], #filters select {
+    border: 1px solid var(--border); border-radius: 6px; padding: 5px 10px;
+    font-size: .82rem; background: var(--bg); color: var(--text); outline: none; transition: border-color .2s;
   }
   #filters input:focus, #filters select:focus { border-color: var(--primary); }
-  #filters input#search { min-width: 220px; }
+  #search { min-width: 200px; }
+  #f-categorie { min-width: 140px; }
+
+  .filter-check {
+    display: flex; align-items: center; gap: 5px;
+    font-size: .82rem; color: var(--muted); cursor: pointer; white-space: nowrap;
+  }
+  .filter-check input { cursor: pointer; accent-color: var(--primary); }
+
+  .filters-right { display: flex; gap: 8px; margin-left: auto; align-items: center; }
+  #btn-export {
+    font-size: .8rem; background: #f0fdf4; border: 1px solid #86efac;
+    border-radius: 6px; padding: 5px 12px; cursor: pointer; color: #15803d; font-weight: 600; transition: all .15s;
+  }
+  #btn-export:hover { background: #dcfce7; }
   #btn-reset {
-    margin-left: auto;
-    font-size: .8rem;
-    color: var(--muted);
-    cursor: pointer;
-    background: none;
-    border: none;
-    padding: 4px 8px;
-    border-radius: 4px;
+    font-size: .8rem; color: var(--muted); cursor: pointer;
+    background: none; border: none; padding: 4px 8px; border-radius: 4px;
   }
   #btn-reset:hover { background: var(--border); }
 
-  /* ── TABLE ── */
-  #wrap { padding: 20px 24px; overflow-x: auto; }
-  table { width: 100%; border-collapse: collapse; font-size: .85rem; }
-  thead th {
-    background: var(--card);
-    border-bottom: 2px solid var(--border);
-    padding: 10px 12px;
-    text-align: left;
-    font-weight: 600;
-    color: var(--muted);
-    white-space: nowrap;
+  /* ── BULK BAR ── */
+  #bulk-bar {
+    display: none; align-items: center; gap: 12px;
+    background: #1d4ed8; color: white;
+    padding: 9px 24px; font-size: .85rem;
   }
-  tbody tr { border-bottom: 1px solid var(--border); background: var(--card); }
-  tbody tr:hover { background: #f8fafc; }
-  tbody td { padding: 9px 12px; vertical-align: top; }
+  #bulk-bar.visible { display: flex; }
+  #bulk-count { font-weight: 700; }
+  .bulk-btn {
+    background: rgba(255,255,255,.2); border: 1px solid rgba(255,255,255,.4);
+    border-radius: 6px; padding: 4px 12px; cursor: pointer; color: white;
+    font-size: .8rem; transition: background .15s;
+  }
+  .bulk-btn:hover { background: rgba(255,255,255,.35); }
+  #bulk-cancel { background: none; border: none; color: rgba(255,255,255,.7); cursor: pointer; margin-left: auto; font-size: .8rem; }
 
-  .col-name   { min-width: 160px; font-weight: 600; }
+  /* ── TABLE ── */
+  #wrap { padding: 16px 24px; overflow-x: auto; }
+  table { width: 100%; border-collapse: collapse; font-size: .82rem; }
+  thead th {
+    background: var(--card); border-bottom: 2px solid var(--border);
+    padding: 9px 10px; text-align: left; font-weight: 600;
+    color: var(--muted); white-space: nowrap;
+  }
+  thead th.sortable { cursor: pointer; user-select: none; }
+  thead th.sortable:hover { color: var(--text); }
+  thead th.sort-asc::after  { content: ' ↑'; color: var(--primary); }
+  thead th.sort-desc::after { content: ' ↓'; color: var(--primary); }
+
+  tbody tr { border-bottom: 1px solid var(--border); background: var(--card); transition: background .1s; }
+  tbody tr:hover { background: #f8fafc; }
+  tbody tr.selected { background: #eff6ff; }
+  tbody td { padding: 8px 10px; vertical-align: top; }
+
+  .col-check  { width: 32px; text-align: center; }
+  .col-dept   { text-align: center; width: 44px; }
+  .col-name   { min-width: 150px; font-weight: 600; }
+  .col-cat    { min-width: 110px; color: var(--muted); font-size: .78rem; }
   .col-phone  { white-space: nowrap; }
-  .col-dept   { text-align: center; width: 50px; }
-  .col-status { width: 120px; }
-  .col-notes  { min-width: 200px; }
-  .col-recall { width: 130px; }
-  .col-assign { min-width: 110px; }
+  .col-email  { min-width: 160px; font-size: .78rem; word-break: break-all; }
+  .col-rating { text-align: center; width: 70px; white-space: nowrap; }
+  .col-status { width: 110px; }
+  .col-notes  { min-width: 180px; }
+  .col-recall { width: 120px; }
   .col-links  { white-space: nowrap; }
+
+  input[type=checkbox] { cursor: pointer; accent-color: var(--primary); width: 14px; height: 14px; }
 
   a { color: var(--primary); text-decoration: none; }
   a:hover { text-decoration: underline; }
 
   /* ── BADGES STATUT ── */
   .badge {
-    display: inline-block;
-    padding: 2px 9px;
-    border-radius: 999px;
-    font-size: .75rem;
-    font-weight: 600;
-    cursor: pointer;
-    user-select: none;
-    white-space: nowrap;
+    display: inline-block; padding: 2px 9px; border-radius: 999px;
+    font-size: .73rem; font-weight: 600; cursor: pointer; user-select: none; white-space: nowrap;
   }
   .badge.nouveau   { background: #f1f5f9; color: #475569; }
   .badge.contacte  { background: #eff6ff; color: #2563eb; }
@@ -143,192 +170,91 @@
   .badge.perdu     { background: #fef2f2; color: #b91c1c; }
 
   select.status-select {
-    font-size: .78rem;
-    border: 1px solid var(--border);
-    border-radius: 6px;
-    padding: 2px 4px;
-    background: var(--card);
-    cursor: pointer;
+    font-size: .75rem; border: 1px solid var(--border); border-radius: 6px;
+    padding: 2px 4px; background: var(--card); cursor: pointer;
   }
 
   /* ── NOTES ── */
   .notes-cell { position: relative; }
   .notes-text {
-    min-height: 28px;
-    padding: 3px 6px;
-    border-radius: 5px;
-    border: 1px solid transparent;
-    cursor: pointer;
-    color: var(--text);
-    font-size: .82rem;
-    line-height: 1.4;
-    white-space: pre-wrap;
-    word-break: break-word;
+    min-height: 26px; padding: 3px 6px; border-radius: 5px;
+    border: 1px solid transparent; cursor: pointer; color: var(--text);
+    font-size: .8rem; line-height: 1.4; white-space: pre-wrap; word-break: break-word;
   }
   .notes-text:hover { border-color: var(--border); background: var(--bg); }
-  .notes-text:empty::before { content: 'Ajouter une note…'; color: var(--muted); font-style: italic; }
+  .notes-text:empty::before { content: '+ note'; color: var(--muted); font-style: italic; }
   textarea.notes-ta {
-    width: 100%;
-    min-height: 60px;
-    resize: vertical;
-    border: 1px solid var(--primary);
-    border-radius: 5px;
-    padding: 4px 6px;
-    font-size: .82rem;
-    font-family: inherit;
-    outline: none;
-    background: var(--card);
+    width: 100%; min-height: 56px; resize: vertical;
+    border: 1px solid var(--primary); border-radius: 5px; padding: 4px 6px;
+    font-size: .8rem; font-family: inherit; outline: none; background: var(--card);
   }
-  .save-indicator {
-    font-size: .7rem;
-    color: var(--muted);
-    position: absolute;
-    bottom: -14px;
-    right: 0;
-  }
+  .save-indicator { font-size: .68rem; color: var(--muted); position: absolute; bottom: -13px; right: 0; }
 
   /* ── RAPPEL ── */
   input.rappel-input {
-    border: 1px solid var(--border);
-    border-radius: 5px;
-    padding: 3px 6px;
-    font-size: .82rem;
-    font-family: inherit;
-    background: var(--bg);
-    color: var(--text);
-    width: 115px;
+    border: 1px solid var(--border); border-radius: 5px; padding: 3px 6px;
+    font-size: .8rem; font-family: inherit; background: var(--bg); color: var(--text); width: 110px;
   }
   input.rappel-input.overdue { border-color: var(--danger); background: #fef2f2; }
 
-  /* ── ASSIGNÉ ── */
-  input.assign-input {
-    border: 1px solid transparent;
-    border-radius: 5px;
-    padding: 3px 6px;
-    font-size: .82rem;
-    font-family: inherit;
-    background: transparent;
-    width: 100%;
-  }
-  input.assign-input:hover { border-color: var(--border); background: var(--bg); }
-  input.assign-input:focus { border-color: var(--primary); outline: none; background: var(--card); }
-
   /* ── PAGINATION ── */
   #pagination {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    gap: 10px;
-    padding: 16px 24px;
-    font-size: .85rem;
-    color: var(--muted);
+    display: flex; align-items: center; justify-content: center;
+    gap: 10px; padding: 14px 24px; font-size: .83rem; color: var(--muted); flex-wrap: wrap;
   }
   .page-btn {
-    background: var(--card);
-    border: 1px solid var(--border);
-    border-radius: 6px;
-    padding: 5px 14px;
-    cursor: pointer;
-    font-size: .85rem;
-    transition: background .15s;
+    background: var(--card); border: 1px solid var(--border); border-radius: 6px;
+    padding: 5px 14px; cursor: pointer; font-size: .83rem; transition: background .15s;
   }
   .page-btn:hover:not(:disabled) { background: var(--border); }
   .page-btn:disabled { opacity: .4; cursor: default; }
-
-  /* ── LOADER ── */
-  #loader {
-    text-align: center;
-    padding: 40px;
-    color: var(--muted);
-    font-size: .9rem;
-    display: none;
+  #f-page-size {
+    border: 1px solid var(--border); border-radius: 6px; padding: 4px 8px;
+    font-size: .8rem; background: var(--bg); color: var(--text); cursor: pointer;
   }
+
+  /* ── LOADER / ERROR ── */
+  #loader { text-align: center; padding: 40px; color: var(--muted); font-size: .9rem; display: none; }
   #loader.visible { display: block; }
   #error-msg {
-    background: #fef2f2;
-    color: #b91c1c;
-    border: 1px solid #fecaca;
-    border-radius: 8px;
-    padding: 12px 18px;
-    margin: 20px 24px;
-    font-size: .88rem;
-    display: none;
+    background: #fef2f2; color: #b91c1c; border: 1px solid #fecaca;
+    border-radius: 8px; padding: 12px 18px; margin: 16px 24px;
+    font-size: .85rem; display: none;
   }
   #error-msg.visible { display: block; }
 
-  /* ── LOGIN OVERLAY ── */
+  /* ── LOGIN ── */
   #login-overlay {
     position: fixed; inset: 0;
     background: linear-gradient(135deg, #1e3a5f 0%, #2d6a4f 100%);
-    display: flex; align-items: center; justify-content: center;
-    z-index: 9999;
+    display: flex; align-items: center; justify-content: center; z-index: 9999;
   }
   #login-overlay.hidden { display: none; }
   .login-card {
-    background: var(--card);
-    border-radius: 14px;
-    padding: 40px 36px;
-    width: 100%; max-width: 380px;
-    box-shadow: 0 20px 60px rgba(0,0,0,.3);
-    text-align: center;
+    background: var(--card); border-radius: 14px; padding: 40px 36px;
+    width: 100%; max-width: 380px; box-shadow: 0 20px 60px rgba(0,0,0,.3); text-align: center;
   }
   .login-card h2 { font-size: 1.4rem; margin-bottom: 6px; }
   .login-card p  { color: var(--muted); font-size: .88rem; margin-bottom: 28px; }
   .login-form-group { display: flex; flex-direction: column; gap: 12px; }
   .login-form-group input {
-    border: 1px solid var(--border);
-    border-radius: 8px;
-    padding: 10px 14px;
-    font-size: .9rem;
-    font-family: inherit;
-    outline: none;
-    transition: border-color .2s;
+    border: 1px solid var(--border); border-radius: 8px; padding: 10px 14px;
+    font-size: .9rem; font-family: inherit; outline: none; transition: border-color .2s;
   }
   .login-form-group input:focus { border-color: var(--primary); }
   #login-btn {
-    margin-top: 6px;
-    background: var(--primary);
-    color: #fff;
-    border: none;
-    border-radius: 8px;
-    padding: 11px;
-    font-size: .95rem;
-    font-weight: 600;
-    cursor: pointer;
-    transition: background .15s;
+    margin-top: 6px; background: var(--primary); color: #fff; border: none;
+    border-radius: 8px; padding: 11px; font-size: .95rem; font-weight: 600;
+    cursor: pointer; transition: background .15s;
   }
   #login-btn:hover { background: #2563eb; }
   #login-btn:disabled { background: #93c5fd; cursor: default; }
-  #login-error {
-    margin-top: 12px;
-    color: var(--danger);
-    font-size: .82rem;
-    min-height: 18px;
-  }
-
-  /* ── USER INFO (header) ── */
-  #user-info {
-    display: flex; align-items: center; gap: 10px; margin-left: auto; flex-shrink: 0;
-  }
-  #user-name {
-    font-size: .82rem; color: var(--muted); font-weight: 500;
-  }
-  #btn-logout {
-    font-size: .78rem;
-    background: none;
-    border: 1px solid var(--border);
-    border-radius: 6px;
-    padding: 4px 10px;
-    cursor: pointer;
-    color: var(--muted);
-    transition: all .15s;
-  }
-  #btn-logout:hover { background: #fef2f2; border-color: var(--danger); color: var(--danger); }
+  #login-error { margin-top: 12px; color: var(--danger); font-size: .82rem; min-height: 18px; }
 </style>
 </head>
 <body>
 
-<!-- ── LOGIN OVERLAY ── -->
+<!-- LOGIN -->
 <div id="login-overlay">
   <div class="login-card">
     <h2>🌿 CRM Paysagistes</h2>
@@ -342,29 +268,29 @@
   </div>
 </div>
 
-<!-- ── CRM ── -->
+<!-- CRM -->
 <div id="crm-app" style="display:none">
 
 <header>
   <h1>🌿 CRM Paysagistes</h1>
   <div class="stats-bar" id="stats-bar">
-    <span class="stat-chip total" id="s-total">— total</span>
-    <span class="stat-chip today" id="s-today">— aujourd'hui</span>
-    <span class="stat-chip nouveau"   id="s-nouveau">—</span>
-    <span class="stat-chip contacte"  id="s-contacte">—</span>
-    <span class="stat-chip interesse" id="s-interesse">—</span>
-    <span class="stat-chip client"    id="s-client">—</span>
-    <span class="stat-chip perdu"     id="s-perdu">—</span>
+    <span class="stat-chip total"     id="s-total">—</span>
+    <span class="stat-chip today"     id="s-today">—</span>
+    <span class="stat-chip nouveau"   id="s-nouveau" data-statut="nouveau">—</span>
+    <span class="stat-chip contacte"  id="s-contacte" data-statut="contacte">—</span>
+    <span class="stat-chip interesse" id="s-interesse" data-statut="interesse">—</span>
+    <span class="stat-chip client"    id="s-client" data-statut="client">—</span>
+    <span class="stat-chip perdu"     id="s-perdu" data-statut="perdu">—</span>
   </div>
   <div id="user-info">
     <span id="user-name"></span>
     <button id="btn-logout">Déconnexion</button>
+    <div id="realtime-dot" title="Sync temps réel"></div>
   </div>
-  <div id="realtime-dot" title="Sync temps réel"></div>
 </header>
 
 <div id="filters">
-  <input type="search" id="search" placeholder="Rechercher nom, tél, email…" />
+  <input type="search" id="search" placeholder="Nom, tél, email, adresse…" />
   <select id="f-statut">
     <option value="">Tous les statuts</option>
     <option value="nouveau">Nouveau</option>
@@ -374,14 +300,32 @@
     <option value="perdu">Perdu</option>
   </select>
   <select id="f-dept"><option value="">Tous les depts</option></select>
-  <select id="f-assigne"><option value="">Tous les assignés</option></select>
+  <input type="text" id="f-categorie" placeholder="Catégorie…" />
+  <label class="filter-check"><input type="checkbox" id="f-has-email" /> A un email</label>
+  <label class="filter-check"><input type="checkbox" id="f-has-phone" /> A un tél</label>
   <select id="f-rappel">
     <option value="">Rappels : tous</option>
     <option value="today">Aujourd'hui</option>
     <option value="overdue">En retard</option>
     <option value="upcoming">Dans 7 jours</option>
   </select>
-  <button id="btn-reset">✕ Réinitialiser</button>
+  <select id="f-assigne"><option value="">Tous les assignés</option></select>
+  <div class="filters-right">
+    <button id="btn-export">⬇ CSV</button>
+    <button id="btn-reset">✕ Réinitialiser</button>
+  </div>
+</div>
+
+<div id="bulk-bar">
+  <span id="bulk-count">0 sélectionnés</span>
+  <span style="opacity:.5">|</span>
+  <span style="font-size:.8rem">Changer statut :</span>
+  <button class="bulk-btn" data-statut="contacte">Contacté</button>
+  <button class="bulk-btn" data-statut="interesse">Intéressé</button>
+  <button class="bulk-btn" data-statut="client">Client</button>
+  <button class="bulk-btn" data-statut="perdu">Perdu</button>
+  <button class="bulk-btn" data-statut="nouveau">Nouveau</button>
+  <button id="bulk-cancel">✕ Annuler</button>
 </div>
 
 <div id="error-msg"></div>
@@ -391,15 +335,17 @@
   <table>
     <thead>
       <tr>
-        <th>Dept</th>
-        <th>Nom</th>
-        <th>Téléphone</th>
-        <th>Adresse</th>
-        <th>Statut</th>
-        <th>Notes</th>
-        <th>Rappel</th>
-        <th>Assigné</th>
-        <th>Liens</th>
+        <th class="col-check"><input type="checkbox" id="select-all" title="Tout sélectionner" /></th>
+        <th class="sortable col-dept"   data-col="dept">Dept</th>
+        <th class="sortable col-name"   data-col="name">Nom</th>
+        <th class="col-cat">Catégorie</th>
+        <th class="sortable col-phone"  data-col="phone">Téléphone</th>
+        <th class="col-email">Email</th>
+        <th class="sortable col-rating" data-col="rating">Note</th>
+        <th class="col-status">Statut</th>
+        <th class="col-notes">Notes</th>
+        <th class="sortable col-recall" data-col="rappel_le">Rappel</th>
+        <th class="col-links">Liens</th>
       </tr>
     </thead>
     <tbody id="tbody"></tbody>
@@ -410,48 +356,48 @@
   <button class="page-btn" id="btn-prev" disabled>← Préc.</button>
   <span id="page-info"></span>
   <button class="page-btn" id="btn-next" disabled>Suiv. →</button>
+  <select id="f-page-size">
+    <option value="25">25 / page</option>
+    <option value="50" selected>50 / page</option>
+    <option value="100">100 / page</option>
+  </select>
 </div>
+
 </div><!-- /crm-app -->
 
 <script>
-// ─────────────────────────────────────────────
-// CONFIG
-// ─────────────────────────────────────────────
+// ── CONFIG ──
 const SUPABASE_URL      = 'https://tzwrzkiqdkcgaqnxntyt.supabase.co';
 const SUPABASE_ANON_KEY = 'sb_publishable_1qXmP6t8kV5Kl5LhfPcEog_iMAR3pI6';
 
-const PAGE_SIZE = 50;
-const STATUTS = ['nouveau', 'contacte', 'interesse', 'client', 'perdu'];
-const LABEL = { nouveau: 'Nouveau', contacte: 'Contacté', interesse: 'Intéressé', client: 'Client', perdu: 'Perdu' };
-const TODAY = new Date().toISOString().slice(0, 10);
+const STATUTS = ['nouveau','contacte','interesse','client','perdu'];
+const LABEL   = { nouveau:'Nouveau', contacte:'Contacté', interesse:'Intéressé', client:'Client', perdu:'Perdu' };
+const TODAY   = new Date().toISOString().slice(0,10);
 
-// ─────────────────────────────────────────────
-// INIT SUPABASE
-// ─────────────────────────────────────────────
 const { createClient } = supabase;
 const db = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
-// Indique si les colonnes CRM (migration) sont disponibles
-let crmColumnsAvailable = false;
+// ── STATE ──
+let currentUser  = null;
+let currentPage  = 0;
+let totalCount   = 0;
+let pageSize     = 50;
+let sortCol      = 'scraped_at';
+let sortAsc      = false;
+let selectedIds  = new Set();
+let debounceTimer = null;
+let filters = { search:'', statut:'', dept:'', assigne:'', rappel:'', categorie:'', hasEmail:false, hasPhone:false };
 
-// Utilisateur connecté
-let currentUser = null;
-
-// ─────────────────────────────────────────────
-// AUTH — LOGIN / LOGOUT
-// ─────────────────────────────────────────────
+// ── AUTH ──
 function showLogin() {
   document.getElementById('login-overlay').classList.remove('hidden');
   document.getElementById('crm-app').style.display = 'none';
 }
-
 function showCRM(user) {
   currentUser = user;
   document.getElementById('login-overlay').classList.add('hidden');
   document.getElementById('crm-app').style.display = 'block';
-
-  const name = user.user_metadata?.name || user.email;
-  document.getElementById('user-name').textContent = name;
+  document.getElementById('user-name').textContent = user.user_metadata?.name || user.email;
 }
 
 document.getElementById('login-btn').addEventListener('click', async () => {
@@ -459,467 +405,358 @@ document.getElementById('login-btn').addEventListener('click', async () => {
   const pwd   = document.getElementById('login-pwd').value;
   const errEl = document.getElementById('login-error');
   const btn   = document.getElementById('login-btn');
-
   errEl.textContent = '';
   if (!email || !pwd) { errEl.textContent = 'Email et mot de passe requis.'; return; }
-
-  btn.disabled = true;
-  btn.textContent = 'Connexion…';
-
+  btn.disabled = true; btn.textContent = 'Connexion…';
   const { data, error } = await db.auth.signInWithPassword({ email, password: pwd });
-
-  btn.disabled = false;
-  btn.textContent = 'Se connecter';
-
-  if (error) {
-    errEl.textContent = error.message === 'Invalid login credentials'
-      ? 'Email ou mot de passe incorrect.'
-      : error.message;
-    return;
-  }
-
+  btn.disabled = false; btn.textContent = 'Se connecter';
+  if (error) { errEl.textContent = error.message === 'Invalid login credentials' ? 'Email ou mot de passe incorrect.' : error.message; return; }
   showCRM(data.user);
   await startCRM();
 });
+document.getElementById('login-pwd').addEventListener('keydown', e => { if (e.key === 'Enter') document.getElementById('login-btn').click(); });
+document.getElementById('btn-logout').addEventListener('click', async () => { await db.auth.signOut(); currentUser = null; showLogin(); });
 
-// Entrée clavier dans le champ mot de passe
-document.getElementById('login-pwd').addEventListener('keydown', e => {
-  if (e.key === 'Enter') document.getElementById('login-btn').click();
-});
-
-document.getElementById('btn-logout').addEventListener('click', async () => {
-  await db.auth.signOut();
-  currentUser = null;
-  showLogin();
-});
-
-// ─────────────────────────────────────────────
-// STATE
-// ─────────────────────────────────────────────
-let currentPage = 0;
-let totalCount  = 0;
-let filters = { search: '', statut: '', dept: '', assigne: '', rappel: '' };
-let debounceTimer = null;
-
-// ─────────────────────────────────────────────
-// HELPERS
-// ─────────────────────────────────────────────
-function showError(msg) {
-  const el = document.getElementById('error-msg');
-  el.textContent = msg;
-  el.classList.add('visible');
-}
-function hideError() { document.getElementById('error-msg').classList.remove('visible'); }
-function showLoader(v) { document.getElementById('loader').classList.toggle('visible', v); }
+// ── HELPERS ──
+function showError(msg) { const e = document.getElementById('error-msg'); e.textContent = msg; e.classList.add('visible'); }
+function hideError()    { document.getElementById('error-msg').classList.remove('visible'); }
+function showLoader(v)  { document.getElementById('loader').classList.toggle('visible', v); }
 function esc(s) { return s ? String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;') : ''; }
+function isOverdue(d) { return d && d < TODAY; }
 
-function isOverdue(dateStr) {
-  if (!dateStr) return false;
-  return dateStr < TODAY;
-}
-
-// ─────────────────────────────────────────────
-// BUILD QUERY
-// ─────────────────────────────────────────────
+// ── BUILD QUERY ──
 function buildQuery() {
-  const cols = crmColumnsAvailable
-    ? 'place_id,name,phone,address,website,email,maps_url,statut,notes,rappel_le,assigne_a,dept,scraped_at'
-    : 'place_id,name,phone,address,website,email,maps_url,scraped_at';
-
-  let q = db.from('landscapers').select(cols, { count: 'exact' });
-
+  let q = db.from('landscapers').select(
+    'place_id,name,phone,address,website,email,maps_url,rating,review_count,categorie,statut,notes,rappel_le,assigne_a,dept,scraped_at',
+    { count: 'exact' }
+  );
   if (filters.search) {
     const s = filters.search.trim();
-    q = q.or(`name.ilike.%${s}%,phone.ilike.%${s}%,email.ilike.%${s}%`);
+    q = q.or(`name.ilike.%${s}%,phone.ilike.%${s}%,email.ilike.%${s}%,address.ilike.%${s}%`);
   }
-  if (crmColumnsAvailable) {
-    if (filters.statut)  q = q.eq('statut', filters.statut);
-    if (filters.dept)    q = q.eq('dept', filters.dept);
-    if (filters.assigne) q = q.eq('assigne_a', filters.assigne);
-
-    if (filters.rappel === 'today')    q = q.eq('rappel_le', TODAY);
-    if (filters.rappel === 'overdue')  q = q.lt('rappel_le', TODAY).not('rappel_le', 'is', null);
-    if (filters.rappel === 'upcoming') {
-      const in7 = new Date(); in7.setDate(in7.getDate() + 7);
-      q = q.gte('rappel_le', TODAY).lte('rappel_le', in7.toISOString().slice(0,10));
-    }
+  if (filters.statut)    q = q.eq('statut', filters.statut);
+  if (filters.dept)      q = q.eq('dept', filters.dept);
+  if (filters.assigne)   q = q.eq('assigne_a', filters.assigne);
+  if (filters.categorie) q = q.ilike('categorie', `%${filters.categorie}%`);
+  if (filters.hasEmail)  q = q.not('email', 'is', null);
+  if (filters.hasPhone)  q = q.not('phone', 'is', null);
+  if (filters.rappel === 'today')    q = q.eq('rappel_le', TODAY);
+  if (filters.rappel === 'overdue')  q = q.lt('rappel_le', TODAY).not('rappel_le', 'is', null);
+  if (filters.rappel === 'upcoming') {
+    const in7 = new Date(); in7.setDate(in7.getDate() + 7);
+    q = q.gte('rappel_le', TODAY).lte('rappel_le', in7.toISOString().slice(0,10));
   }
-
   return q;
 }
 
-// ─────────────────────────────────────────────
-// LOAD DATA
-// ─────────────────────────────────────────────
+// ── LOAD PAGE ──
 async function loadPage() {
-  showLoader(true);
-  hideError();
-
-  const from = currentPage * PAGE_SIZE;
-  const to   = from + PAGE_SIZE - 1;
-
+  showLoader(true); hideError();
+  const from = currentPage * pageSize;
   const { data, error, count } = await buildQuery()
-    .order('scraped_at', { ascending: false })
-    .range(from, to);
-
+    .order(sortCol, { ascending: sortAsc })
+    .range(from, from + pageSize - 1);
   showLoader(false);
-
   if (error) { showError('Erreur Supabase : ' + error.message); return; }
-
   totalCount = count ?? 0;
   renderTable(data || []);
   renderPagination();
+  updateSortHeaders();
 }
 
-// ─────────────────────────────────────────────
-// RENDER TABLE
-// ─────────────────────────────────────────────
+// ── RENDER TABLE ──
 function renderTable(rows) {
   const tbody = document.getElementById('tbody');
-  tbody.innerHTML = rows.map(r => `
-    <tr data-id="${esc(r.place_id)}">
+  tbody.innerHTML = rows.map(r => {
+    const isSelected = selectedIds.has(r.place_id);
+    const rating = r.rating ? `★${r.rating.toFixed(1)} <small style="color:var(--muted)">(${r.review_count||0})</small>` : '<span style="color:var(--muted)">—</span>';
+    const emailCell = r.email ? `<a href="mailto:${esc(r.email)}" title="${esc(r.email)}">${esc(r.email)}</a>` : '<span style="color:var(--muted)">—</span>';
+    return `<tr data-id="${esc(r.place_id)}" class="${isSelected ? 'selected' : ''}">
+      <td class="col-check"><input type="checkbox" class="row-check" data-id="${esc(r.place_id)}" ${isSelected ? 'checked' : ''} /></td>
       <td class="col-dept">${esc(r.dept || '—')}</td>
       <td class="col-name">${esc(r.name)}</td>
+      <td class="col-cat">${esc(r.categorie || '')}</td>
       <td class="col-phone">${r.phone ? `<a href="tel:${esc(r.phone)}">${esc(r.phone)}</a>` : '<span style="color:var(--muted)">—</span>'}</td>
-      <td>${esc(r.address || '')}</td>
+      <td class="col-email">${emailCell}</td>
+      <td class="col-rating">${rating}</td>
       <td class="col-status">${renderStatus(r)}</td>
       <td class="col-notes notes-cell">${renderNotes(r)}</td>
       <td class="col-recall">${renderRappel(r)}</td>
-      <td class="col-assign">${renderAssign(r)}</td>
       <td class="col-links">${renderLinks(r)}</td>
-    </tr>
-  `).join('');
+    </tr>`;
+  }).join('');
 
-  // Bind events
-  tbody.querySelectorAll('.badge').forEach(el => {
-    el.addEventListener('click', onBadgeClick);
-  });
-  tbody.querySelectorAll('.notes-text').forEach(el => {
-    el.addEventListener('click', onNotesClick);
-  });
-  tbody.querySelectorAll('.rappel-input').forEach(el => {
-    el.addEventListener('change', onRappelChange);
-  });
-  tbody.querySelectorAll('.assign-input').forEach(el => {
-    el.addEventListener('change', onAssignChange);
-  });
+  tbody.querySelectorAll('.badge').forEach(el => el.addEventListener('click', onBadgeClick));
+  tbody.querySelectorAll('.notes-text').forEach(el => el.addEventListener('click', onNotesClick));
+  tbody.querySelectorAll('.rappel-input').forEach(el => el.addEventListener('change', onRappelChange));
+  tbody.querySelectorAll('.row-check').forEach(el => el.addEventListener('change', onRowCheck));
+  document.getElementById('select-all').checked = rows.length > 0 && rows.every(r => selectedIds.has(r.place_id));
 }
 
 function renderStatus(r) {
   const s = r.statut || 'nouveau';
-  return `<span class="badge ${s}" data-id="${esc(r.place_id)}" data-statut="${s}">${esc(LABEL[s] || s)}</span>`;
+  return `<span class="badge ${s}" data-id="${esc(r.place_id)}" data-statut="${s}">${LABEL[s]||s}</span>`;
 }
-
 function renderNotes(r) {
-  const txt = r.notes ? esc(r.notes).replace(/\n/g, '<br>') : '';
-  return `<div class="notes-text" data-id="${esc(r.place_id)}" data-notes="${esc(r.notes || '')}">${txt}</div>`;
+  const txt = r.notes ? esc(r.notes).replace(/\n/g,'<br>') : '';
+  return `<div class="notes-text" data-id="${esc(r.place_id)}" data-notes="${esc(r.notes||'')}">${txt}</div>`;
 }
-
 function renderRappel(r) {
-  const overdue = isOverdue(r.rappel_le) ? ' overdue' : '';
-  return `<input type="date" class="rappel-input${overdue}" data-id="${esc(r.place_id)}" value="${esc(r.rappel_le || '')}" />`;
+  const od = isOverdue(r.rappel_le) ? ' overdue' : '';
+  return `<input type="date" class="rappel-input${od}" data-id="${esc(r.place_id)}" value="${esc(r.rappel_le||'')}" />`;
 }
-
-function renderAssign(r) {
-  const val = r.assigne_a || (currentUser ? currentUser.email : '');
-  return `<input type="text" class="assign-input" data-id="${esc(r.place_id)}" value="${esc(val)}" placeholder="${esc(currentUser ? currentUser.email : '—')}" />`;
-}
-
 function renderLinks(r) {
   const parts = [];
-  if (r.maps_url)  parts.push(`<a href="${esc(r.maps_url)}" target="_blank" title="Google Maps">Maps</a>`);
-  if (r.website)   parts.push(`<a href="${esc(r.website)}" target="_blank" title="Site web">Web</a>`);
-  if (r.email)     parts.push(`<a href="mailto:${esc(r.email)}" title="${esc(r.email)}">Mail</a>`);
+  if (r.maps_url) parts.push(`<a href="${esc(r.maps_url)}" target="_blank">Maps</a>`);
+  if (r.website)  parts.push(`<a href="${esc(r.website)}" target="_blank">Web</a>`);
   return parts.join(' · ') || '<span style="color:var(--muted)">—</span>';
 }
 
-// ─────────────────────────────────────────────
-// PAGINATION
-// ─────────────────────────────────────────────
+// ── SORT ──
+function updateSortHeaders() {
+  document.querySelectorAll('thead th.sortable').forEach(th => {
+    th.classList.remove('sort-asc','sort-desc');
+    if (th.dataset.col === sortCol) th.classList.add(sortAsc ? 'sort-asc' : 'sort-desc');
+  });
+}
+document.querySelectorAll('thead th.sortable').forEach(th => {
+  th.addEventListener('click', () => {
+    if (sortCol === th.dataset.col) sortAsc = !sortAsc;
+    else { sortCol = th.dataset.col; sortAsc = false; }
+    currentPage = 0;
+    loadPage();
+  });
+});
+
+// ── PAGINATION ──
 function renderPagination() {
-  const totalPages = Math.ceil(totalCount / PAGE_SIZE) || 1;
+  const totalPages = Math.ceil(totalCount / pageSize) || 1;
   document.getElementById('page-info').textContent =
-    `Page ${currentPage + 1} / ${totalPages} — ${totalCount.toLocaleString('fr-FR')} leads`;
+    `Page ${currentPage+1}/${totalPages} — ${totalCount.toLocaleString('fr-FR')} leads`;
   document.getElementById('btn-prev').disabled = currentPage === 0;
   document.getElementById('btn-next').disabled = currentPage >= totalPages - 1;
 }
-
 document.getElementById('btn-prev').addEventListener('click', () => { currentPage--; loadPage(); });
 document.getElementById('btn-next').addEventListener('click', () => { currentPage++; loadPage(); });
+document.getElementById('f-page-size').addEventListener('change', e => {
+  pageSize = parseInt(e.target.value); currentPage = 0; loadPage();
+});
 
-// ─────────────────────────────────────────────
-// UPDATE HELPERS
-// ─────────────────────────────────────────────
-async function updateField(placeId, fields) {
-  const { error } = await db.from('landscapers').update(fields).eq('place_id', placeId);
+// ── UPDATE ──
+async function updateField(id, fields) {
+  const { error } = await db.from('landscapers').update(fields).eq('place_id', id);
   if (error) showError('Erreur sauvegarde : ' + error.message);
   else hideError();
 }
 
-// ─────────────────────────────────────────────
-// STATUS BADGE CLICK → inline select
-// ─────────────────────────────────────────────
+// ── STATUS BADGE ──
 function onBadgeClick(e) {
   const badge = e.currentTarget;
-  const id    = badge.dataset.id;
-  const cur   = badge.dataset.statut || 'nouveau';
-
+  const id = badge.dataset.id, cur = badge.dataset.statut || 'nouveau';
   const sel = document.createElement('select');
   sel.className = 'status-select';
-  STATUTS.forEach(s => {
-    const opt = document.createElement('option');
-    opt.value = s; opt.textContent = LABEL[s];
-    if (s === cur) opt.selected = true;
-    sel.appendChild(opt);
-  });
-  badge.replaceWith(sel);
-  sel.focus();
-
+  STATUTS.forEach(s => { const o = document.createElement('option'); o.value=s; o.textContent=LABEL[s]; if(s===cur) o.selected=true; sel.appendChild(o); });
+  badge.replaceWith(sel); sel.focus();
   const commit = async () => {
-    const newVal = sel.value;
-    await updateField(id, { statut: newVal });
-    const newBadge = document.createElement('span');
-    newBadge.className = `badge ${newVal}`;
-    newBadge.dataset.id     = id;
-    newBadge.dataset.statut = newVal;
-    newBadge.textContent    = LABEL[newVal];
-    newBadge.addEventListener('click', onBadgeClick);
-    sel.replaceWith(newBadge);
+    const v = sel.value;
+    await updateField(id, { statut: v });
+    const nb = document.createElement('span');
+    nb.className = `badge ${v}`; nb.dataset.id=id; nb.dataset.statut=v; nb.textContent=LABEL[v];
+    nb.addEventListener('click', onBadgeClick);
+    sel.replaceWith(nb);
     await loadStats();
   };
   sel.addEventListener('change', commit);
   sel.addEventListener('blur', () => { setTimeout(() => { if (sel.parentNode) sel.replaceWith(badge); }, 150); });
 }
 
-// ─────────────────────────────────────────────
-// NOTES CLICK → textarea with debounced autosave
-// ─────────────────────────────────────────────
+// ── NOTES ──
 function onNotesClick(e) {
   const div = e.currentTarget;
   if (div.querySelector('textarea')) return;
-  const id  = div.dataset.id;
-  const cur = div.dataset.notes || '';
-
-  const ta = document.createElement('textarea');
-  ta.className = 'notes-ta';
-  ta.value = cur;
-
-  const indicator = document.createElement('span');
-  indicator.className = 'save-indicator';
-  div.innerHTML = '';
-  div.appendChild(ta);
-  div.appendChild(indicator);
-  ta.focus();
-
-  let saveTimer = null;
-  ta.addEventListener('input', () => {
-    clearTimeout(saveTimer);
-    indicator.textContent = '…';
-    saveTimer = setTimeout(async () => {
-      await updateField(id, { notes: ta.value });
-      div.dataset.notes = ta.value;
-      indicator.textContent = '✓ Sauvegardé';
-    }, 1200);
-  });
-
+  const id = div.dataset.id, cur = div.dataset.notes || '';
+  const ta = document.createElement('textarea'); ta.className='notes-ta'; ta.value=cur;
+  const ind = document.createElement('span'); ind.className='save-indicator';
+  div.innerHTML=''; div.appendChild(ta); div.appendChild(ind); ta.focus();
+  let t = null;
+  ta.addEventListener('input', () => { clearTimeout(t); ind.textContent='…'; t=setTimeout(async()=>{ await updateField(id,{notes:ta.value}); div.dataset.notes=ta.value; ind.textContent='✓'; },1200); });
   ta.addEventListener('blur', () => {
-    clearTimeout(saveTimer);
-    const val = ta.value;
-    updateField(id, { notes: val });
-    div.dataset.notes = val;
-    const txt = val ? esc(val).replace(/\n/g, '<br>') : '';
-    div.innerHTML = txt;
-    div.addEventListener('click', onNotesClick, { once: true });
+    clearTimeout(t); updateField(id,{notes:ta.value}); div.dataset.notes=ta.value;
+    div.innerHTML = ta.value ? esc(ta.value).replace(/\n/g,'<br>') : '';
+    div.addEventListener('click', onNotesClick, {once:true});
   });
 }
 
-// ─────────────────────────────────────────────
-// RAPPEL CHANGE
-// ─────────────────────────────────────────────
+// ── RAPPEL ──
 async function onRappelChange(e) {
-  const inp = e.currentTarget;
-  const id  = inp.dataset.id;
-  const val = inp.value || null;
+  const inp=e.currentTarget, val=inp.value||null;
   inp.classList.toggle('overdue', isOverdue(val));
-  await updateField(id, { rappel_le: val });
+  await updateField(inp.dataset.id, { rappel_le: val });
 }
 
-// ─────────────────────────────────────────────
-// ASSIGN CHANGE
-// ─────────────────────────────────────────────
-async function onAssignChange(e) {
-  const inp = e.currentTarget;
-  await updateField(inp.dataset.id, { assigne_a: inp.value || null });
+// ── BULK ──
+function onRowCheck(e) {
+  const id = e.currentTarget.dataset.id;
+  const row = e.currentTarget.closest('tr');
+  if (e.currentTarget.checked) { selectedIds.add(id); row.classList.add('selected'); }
+  else { selectedIds.delete(id); row.classList.remove('selected'); }
+  updateBulkBar();
 }
+document.getElementById('select-all').addEventListener('change', e => {
+  document.querySelectorAll('.row-check').forEach(cb => {
+    cb.checked = e.target.checked;
+    const row = cb.closest('tr');
+    if (e.target.checked) { selectedIds.add(cb.dataset.id); row.classList.add('selected'); }
+    else { selectedIds.delete(cb.dataset.id); row.classList.remove('selected'); }
+  });
+  updateBulkBar();
+});
+function updateBulkBar() {
+  const bar = document.getElementById('bulk-bar');
+  bar.classList.toggle('visible', selectedIds.size > 0);
+  document.getElementById('bulk-count').textContent = `${selectedIds.size} sélectionné(s)`;
+}
+document.querySelectorAll('.bulk-btn').forEach(btn => {
+  btn.addEventListener('click', async () => {
+    const ids = [...selectedIds];
+    const { error } = await db.from('landscapers').update({ statut: btn.dataset.statut }).in('place_id', ids);
+    if (!error) { selectedIds.clear(); updateBulkBar(); loadPage(); loadStats(); }
+    else showError('Erreur bulk : ' + error.message);
+  });
+});
+document.getElementById('bulk-cancel').addEventListener('click', () => {
+  selectedIds.clear();
+  document.querySelectorAll('.row-check').forEach(cb => cb.checked=false);
+  document.querySelectorAll('tbody tr').forEach(tr => tr.classList.remove('selected'));
+  document.getElementById('select-all').checked = false;
+  updateBulkBar();
+});
 
-// ─────────────────────────────────────────────
-// STATS
-// ─────────────────────────────────────────────
+// ── EXPORT CSV ──
+document.getElementById('btn-export').addEventListener('click', async () => {
+  const btn = document.getElementById('btn-export');
+  btn.textContent = '…';
+  const { data, error } = await buildQuery().order(sortCol, { ascending: sortAsc });
+  btn.textContent = '⬇ CSV';
+  if (error || !data) { showError('Erreur export'); return; }
+  const headers = ['Dept','Nom','Catégorie','Téléphone','Email','Adresse','Note','Avis','Statut','Notes','Rappel','Assigné','Maps','Site Web'];
+  const rows = data.map(r => [
+    r.dept||'', r.name||'', r.categorie||'', r.phone||'', r.email||'',
+    r.address||'', r.rating||'', r.review_count||'',
+    r.statut||'nouveau', r.notes||'', r.rappel_le||'', r.assigne_a||'',
+    r.maps_url||'', r.website||''
+  ]);
+  const csv = [headers,...rows].map(row =>
+    row.map(c => `"${String(c).replace(/"/g,'""')}"`).join(',')
+  ).join('\n');
+  const blob = new Blob(['\ufeff'+csv], { type:'text/csv;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href=url; a.download=`paysagistes_${TODAY}.csv`; a.click();
+  URL.revokeObjectURL(url);
+});
+
+// ── STATS ──
 async function loadStats() {
   try {
-    const { count: total, error: e1 } = await db
-      .from('landscapers').select('place_id', { count: 'exact', head: true });
-    if (!e1) document.getElementById('s-total').textContent =
-      `${(total || 0).toLocaleString('fr-FR')} total`;
-
-    const { count: today, error: e2 } = await db.from('landscapers')
-      .select('place_id', { count: 'exact', head: true })
-      .gte('scraped_at', TODAY + 'T00:00:00');
-    if (!e2) document.getElementById('s-today').textContent = `+${today || 0} aujourd'hui`;
-  } catch (_) { /* stats non bloquantes */ }
-
-  if (!crmColumnsAvailable) return;
-  try {
+    const { count: total } = await db.from('landscapers').select('place_id',{count:'exact',head:true});
+    document.getElementById('s-total').textContent = `${(total||0).toLocaleString('fr-FR')} total`;
+    const { count: today } = await db.from('landscapers').select('place_id',{count:'exact',head:true}).gte('scraped_at',TODAY+'T00:00:00');
+    document.getElementById('s-today').textContent = `+${today||0} aujourd'hui`;
     for (const s of STATUTS) {
-      const { count, error } = await db.from('landscapers')
-        .select('place_id', { count: 'exact', head: true })
-        .eq('statut', s);
-      if (!error) document.getElementById(`s-${s}`).textContent = `${LABEL[s]} ${count || 0}`;
+      const { count } = await db.from('landscapers').select('place_id',{count:'exact',head:true}).eq('statut',s);
+      document.getElementById(`s-${s}`).textContent = `${LABEL[s]} ${count||0}`;
     }
-  } catch (_) { /* stats statut non bloquantes */ }
+  } catch (_) {}
 }
 
-// ─────────────────────────────────────────────
-// FILTRES
-// ─────────────────────────────────────────────
-async function loadFilterOptions() {
-  if (!crmColumnsAvailable) return;
-  try {
-    const { data: depts, error: e1 } = await db.rpc('crm_depts');
-    if (!e1 && depts) {
-      const fDept = document.getElementById('f-dept');
-      depts.forEach(d => {
-        const opt = document.createElement('option');
-        opt.value = d.dept;
-        opt.textContent = `${d.dept} (${d.nb})`;
-        fDept.appendChild(opt);
-      });
-    }
-  } catch (_) { /* RPC optionnelle */ }
+// Clic sur stat chip → filtre par statut
+document.querySelectorAll('.stat-chip[data-statut]').forEach(chip => {
+  chip.addEventListener('click', () => {
+    const s = chip.dataset.statut;
+    const sel = document.getElementById('f-statut');
+    sel.value = filters.statut === s ? '' : s;
+    filters.statut = sel.value;
+    currentPage = 0; loadPage();
+  });
+});
 
+// ── FILTRES ──
+async function loadFilterOptions() {
   try {
-    const { data: assignes, error: e2 } = await db.rpc('crm_assignes');
-    if (!e2 && assignes) {
-      const fAssign = document.getElementById('f-assigne');
-      assignes.forEach(a => {
-        const opt = document.createElement('option');
-        opt.value = a.assigne_a;
-        opt.textContent = a.assigne_a;
-        fAssign.appendChild(opt);
-      });
+    const { data: depts } = await db.rpc('crm_depts');
+    if (depts) {
+      const fd = document.getElementById('f-dept');
+      depts.forEach(d => { const o=document.createElement('option'); o.value=d.dept; o.textContent=`${d.dept} (${d.nb})`; fd.appendChild(o); });
     }
-  } catch (_) { /* RPC optionnelle */ }
+  } catch(_) {}
+  try {
+    const { data: assignes } = await db.rpc('crm_assignes');
+    if (assignes) {
+      const fa = document.getElementById('f-assigne');
+      assignes.forEach(a => { const o=document.createElement('option'); o.value=a.assigne_a; o.textContent=a.assigne_a; fa.appendChild(o); });
+    }
+  } catch(_) {}
 }
 
 function resetFilters() {
-  filters = { search: '', statut: '', dept: '', assigne: '', rappel: '' };
-  document.getElementById('search').value = '';
-  document.getElementById('f-statut').value  = '';
-  document.getElementById('f-dept').value    = '';
-  document.getElementById('f-assigne').value = '';
-  document.getElementById('f-rappel').value  = '';
-  currentPage = 0;
-  loadPage();
+  filters = { search:'', statut:'', dept:'', assigne:'', rappel:'', categorie:'', hasEmail:false, hasPhone:false };
+  ['search','f-categorie'].forEach(id => document.getElementById(id).value='');
+  ['f-statut','f-dept','f-assigne','f-rappel'].forEach(id => document.getElementById(id).value='');
+  document.getElementById('f-has-email').checked = false;
+  document.getElementById('f-has-phone').checked = false;
+  currentPage = 0; loadPage();
 }
 
 document.getElementById('search').addEventListener('input', e => {
   clearTimeout(debounceTimer);
-  debounceTimer = setTimeout(() => {
-    filters.search = e.target.value;
-    currentPage = 0;
-    loadPage();
-  }, 400);
+  debounceTimer = setTimeout(() => { filters.search=e.target.value; currentPage=0; loadPage(); }, 400);
 });
-
-['f-statut','f-dept','f-assigne','f-rappel'].forEach(id => {
-  document.getElementById(id).addEventListener('change', e => {
-    const key = { 'f-statut': 'statut', 'f-dept': 'dept', 'f-assigne': 'assigne', 'f-rappel': 'rappel' }[id];
-    filters[key] = e.target.value;
-    currentPage = 0;
-    loadPage();
-  });
+document.getElementById('f-categorie').addEventListener('input', e => {
+  clearTimeout(debounceTimer);
+  debounceTimer = setTimeout(() => { filters.categorie=e.target.value; currentPage=0; loadPage(); }, 400);
 });
-
+[['f-statut','statut'],['f-dept','dept'],['f-assigne','assigne'],['f-rappel','rappel']].forEach(([id,key]) => {
+  document.getElementById(id).addEventListener('change', e => { filters[key]=e.target.value; currentPage=0; loadPage(); });
+});
+document.getElementById('f-has-email').addEventListener('change', e => { filters.hasEmail=e.target.checked; currentPage=0; loadPage(); });
+document.getElementById('f-has-phone').addEventListener('change', e => { filters.hasPhone=e.target.checked; currentPage=0; loadPage(); });
 document.getElementById('btn-reset').addEventListener('click', resetFilters);
 
-// ─────────────────────────────────────────────
-// REALTIME
-// ─────────────────────────────────────────────
+// ── REALTIME ──
 function initRealtime() {
   const dot = document.getElementById('realtime-dot');
-  const channel = db.channel('landscapers-crm')
-    .on('postgres_changes', { event: '*', schema: 'public', table: 'landscapers' }, () => {
-      loadStats();
-    })
-    .subscribe(status => {
-      dot.classList.toggle('connected', status === 'SUBSCRIBED');
-    });
+  db.channel('landscapers-crm')
+    .on('postgres_changes', { event:'*', schema:'public', table:'landscapers' }, () => loadStats())
+    .subscribe(s => dot.classList.toggle('connected', s==='SUBSCRIBED'));
 }
 
-// ─────────────────────────────────────────────
-// VÉRIFICATION MIGRATION
-// ─────────────────────────────────────────────
-async function checkMigration() {
-  // Teste si la colonne "statut" existe en faisant une requête minimaliste
-  const { error } = await db.from('landscapers')
-    .select('statut', { count: 'exact', head: true })
-    .limit(1);
-
-  if (error && (error.message.includes('statut') || error.code === '42703')) {
-    showError(
-      '⚠ Migration SQL non exécutée. Ouvrez Supabase Dashboard > SQL Editor et exécutez le contenu de crm/migration.sql. ' +
-      'Le CRM fonctionne en mode lecture seule en attendant.'
-    );
-    crmColumnsAvailable = false;
-  } else {
-    crmColumnsAvailable = true;
-  }
-}
-
-// ─────────────────────────────────────────────
-// DÉMARRER LE CRM (après login)
-// ─────────────────────────────────────────────
+// ── START ──
 async function startCRM() {
   try {
-    await checkMigration();
     await Promise.allSettled([loadStats(), loadFilterOptions()]);
     await loadPage();
     initRealtime();
-  } catch (err) {
+  } catch(err) {
     showLoader(false);
-    showError('Erreur de connexion Supabase : ' + (err.message || err));
-    console.error('[CRM] Erreur startCRM :', err);
+    showError('Erreur Supabase : ' + (err.message||err));
   }
 }
 
-// ─────────────────────────────────────────────
-// BOOT
-// ─────────────────────────────────────────────
+// ── BOOT ──
 (async function init() {
   if (!SUPABASE_ANON_KEY || SUPABASE_ANON_KEY === 'VOTRE_CLE_ANON_ICI') {
-    // Pas de login-overlay, montrer erreur directement
     document.getElementById('login-overlay').classList.add('hidden');
     document.getElementById('crm-app').style.display = 'block';
     showLoader(false);
-    showError('⚠ Configurez SUPABASE_ANON_KEY dans crm/index.html (Supabase Dashboard > Settings > API > anon public key)');
+    showError('Configurez SUPABASE_ANON_KEY dans crm/index.html');
     return;
   }
-
-  // Vérifier si une session existe déjà (refresh de page)
   const { data: { session } } = await db.auth.getSession();
-  if (session?.user) {
-    showCRM(session.user);
-    await startCRM();
-  } else {
-    showLogin();
-  }
-
-  // Écouter les changements de session (expiration, etc.)
+  if (session?.user) { showCRM(session.user); await startCRM(); }
+  else showLogin();
   db.auth.onAuthStateChange((event, session) => {
-    if (event === 'SIGNED_OUT' || !session) {
-      currentUser = null;
-      showLogin();
-    }
+    if (event === 'SIGNED_OUT' || !session) { currentUser = null; showLogin(); }
   });
 })();
 </script>
