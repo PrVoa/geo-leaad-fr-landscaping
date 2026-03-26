@@ -9,12 +9,13 @@ Usage :
     python enrich_leads.py --delay 1.5      # délai entre appels (défaut 1s)
 
 API utilisée (gratuite, sans clé) :
-    https://recherche-entreprises.api.gouv.fr/search?q=NOM&limite=1
+    https://recherche-entreprises.api.gouv.fr/search
 """
 import argparse
 import asyncio
 import re
 import sys
+from difflib import SequenceMatcher
 from pathlib import Path
 
 # Force UTF-8 sur Windows (évite UnicodeEncodeError avec les accents et barres)
@@ -31,13 +32,72 @@ load_dotenv(Path(__file__).resolve().parent.parent / ".env")
 
 DATABASE_URL = os.getenv("DATABASE_URL", "")
 if not DATABASE_URL:
-    sys.exit("❌  DATABASE_URL manquant dans .env")
+    sys.exit("DATABASE_URL manquant dans .env")
 
 _DB_URL = DATABASE_URL.replace("postgresql+asyncpg://", "postgresql://").replace(
     "postgres+asyncpg://", "postgresql://"
 )
 
 API_URL = "https://recherche-entreprises.api.gouv.fr/search"
+
+# Formes juridiques à retirer du nom avant la recherche
+_FORMES_RE = re.compile(
+    r'\b(SASU|SARL|SAS|EURL|EARL|EI|SCI|SA\b|SNC|SCOP|ASSO|AUTO[ -]?ENTREPRENEUR)\b',
+    flags=re.IGNORECASE,
+)
+
+
+# ---------------------------------------------------------------------------
+# Nettoyage du nom
+# ---------------------------------------------------------------------------
+
+def nettoyer_nom(nom: str) -> str:
+    """Retire les formes juridiques et espaces superflus."""
+    return _FORMES_RE.sub('', nom).strip(' -–—').strip()
+
+
+def variantes_nom(nom: str) -> list[str]:
+    """
+    Retourne jusqu'à 3 variantes pour maximiser les chances de match :
+    1. Nom original
+    2. Nom sans forme juridique
+    3. Premier mot significatif (si le nom nettoyé contient plusieurs mots)
+    """
+    brut    = nom.strip()
+    nettoye = nettoyer_nom(brut)
+    mots    = [m for m in nettoye.split() if len(m) > 2]
+    premier = mots[0] if mots else brut
+
+    vus = []
+    for v in [brut, nettoye, premier]:
+        v = v.strip()
+        if v and v not in vus:
+            vus.append(v)
+    return vus
+
+
+# ---------------------------------------------------------------------------
+# Score de similarité
+# ---------------------------------------------------------------------------
+
+def similarite(a: str, b: str) -> float:
+    return SequenceMatcher(None, a.lower(), b.lower()).ratio()
+
+
+def est_bon_match(nom_recherche: str, result: dict, seuil: float = 0.35) -> bool:
+    """Vérifie que le résultat API ressemble au nom cherché."""
+    nom_api = (
+        result.get("nom_complet")
+        or result.get("nom_raison_sociale")
+        or result.get("siege", {}).get("denomination")
+        or ""
+    )
+    nom_net = nettoyer_nom(nom_recherche)
+    # On accepte si l'un ou l'autre dépasse le seuil
+    return (
+        similarite(nom_recherche, nom_api) >= seuil
+        or similarite(nom_net, nom_api) >= seuil
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -52,71 +112,92 @@ def extraire_dirigeant(result: dict) -> str | None:
     d = dirigeants[0]
     prenom = (d.get("prenom") or "").strip().title()
     nom    = (d.get("nom")    or "").strip().upper()
-    qualite = d.get("qualite", "")
     if nom:
         return f"{prenom} {nom}".strip() if prenom else nom
     return None
 
 
-def extraire_infos(result: dict) -> dict:
-    """Extrait siret, forme_juridique, date_creation et nom_gerant."""
-    siege = result.get("siege", {})
-    libelle_forme = (
-        result.get("nature_juridique")             # code (ex: 5499)
-        or result.get("libelle_nature_juridique")  # libellé long
-        or None
-    )
-    # Chercher le libellé lisible dans les champs alternatifs
-    for key in ("forme_juridique", "libelle_forme_juridique"):
+def extraire_forme_juridique(result: dict) -> str | None:
+    for key in ("forme_juridique", "libelle_forme_juridique", "libelle_nature_juridique"):
         val = result.get(key)
         if val:
-            libelle_forme = val
-            break
+            return val
+    return None
 
+
+def extraire_infos(result: dict) -> dict:
+    siege  = result.get("siege", {})
     siren  = result.get("siren", "")
-    siret  = siege.get("siret", "") or siren  # fallback sur siren
+    siret  = siege.get("siret", "") or siren
     date_c = result.get("date_creation") or siege.get("date_creation") or None
 
     return {
         "siret":           siret or None,
-        "forme_juridique": libelle_forme or None,
+        "forme_juridique": extraire_forme_juridique(result),
         "date_creation":   date_c or None,
         "nom_gerant":      extraire_dirigeant(result),
     }
 
 
 # ---------------------------------------------------------------------------
-# Appel API
+# Appel API avec cascade de variantes
 # ---------------------------------------------------------------------------
+
+def extraire_dept_adresse(address: str | None) -> str | None:
+    """Extrait le dept depuis l'adresse si le champ dept est vide."""
+    if not address:
+        return None
+    m = re.search(r'\b(\d{5})\b', address)
+    return m.group(1)[:2] if m else None
+
+
+async def _appel_api(
+    client: httpx.AsyncClient,
+    q: str,
+    dept: str | None,
+) -> list[dict]:
+    params: dict = {"q": q, "limite": 5, "page": 1}
+    if dept:
+        params["departement"] = dept  # filtre côté API
+    try:
+        r = await client.get(API_URL, params=params, timeout=10)
+        r.raise_for_status()
+        return r.json().get("results", [])
+    except httpx.HTTPError:
+        return []
+
 
 async def chercher_entreprise(
     client: httpx.AsyncClient,
     nom: str,
     dept: str | None,
+    address: str | None = None,
 ) -> dict | None:
     """
-    Interroge l'API et retourne le premier résultat pertinent, ou None.
-    Si dept est connu, filtre par code_postal commençant par dept.
+    Cascade de variantes : nom original → nom nettoyé → premier mot.
+    Filtre par département (côté API + vérification code postal).
+    Vérifie la similarité avant d'accepter un résultat.
     """
-    params = {"q": nom, "limite": 5, "page": 1}
-    try:
-        r = await client.get(API_URL, params=params, timeout=10)
-        r.raise_for_status()
-    except httpx.HTTPError:
-        return None
+    dept = dept or extraire_dept_adresse(address)
 
-    results = r.json().get("results", [])
-    if not results:
-        return None
+    for variante in variantes_nom(nom):
+        results = await _appel_api(client, variante, dept)
+        if not results:
+            continue
 
-    # Filtre par département si on le connaît
-    if dept:
+        # Préférer un résultat dans le bon département
+        if dept:
+            for res in results:
+                cp = res.get("siege", {}).get("code_postal", "") or ""
+                if cp.startswith(dept) and est_bon_match(nom, res):
+                    return res
+
+        # Sinon prendre le premier avec un bon score
         for res in results:
-            cp = res.get("siege", {}).get("code_postal", "") or ""
-            if cp.startswith(dept):
+            if est_bon_match(nom, res):
                 return res
 
-    return results[0]
+    return None
 
 
 # ---------------------------------------------------------------------------
@@ -135,17 +216,16 @@ async def run(dept_filter: str | None, limit: int | None, dry_run: bool, delay: 
           ADD COLUMN IF NOT EXISTS date_creation   TEXT
     """)
 
-    # Récupère les leads sans nom_gerant
     where = "nom_gerant IS NULL AND name IS NOT NULL"
     if dept_filter:
         where += f" AND dept = '{dept_filter}'"
 
     rows = await conn.fetch(
-        f"SELECT place_id, name, dept FROM landscapers WHERE {where} ORDER BY scraped_at DESC"
+        f"SELECT place_id, name, dept, address FROM landscapers WHERE {where} ORDER BY scraped_at DESC"
         + (f" LIMIT {limit}" if limit else "")
     )
 
-    total   = len(rows)
+    total    = len(rows)
     enrichis = 0
     echecs   = 0
 
@@ -156,16 +236,16 @@ async def run(dept_filter: str | None, limit: int | None, dry_run: bool, delay: 
 
     async with httpx.AsyncClient(headers={"User-Agent": "geo-leaad-enrichissement/1.0"}) as http:
         for i, row in enumerate(rows, 1):
-            nom   = row["name"]
-            pid   = row["place_id"]
-            dept  = row["dept"]
+            nom     = row["name"]
+            pid     = row["place_id"]
+            dept    = row["dept"]
+            address = row["address"]
 
-            # Barre de progression
             pct = int(i / total * 30)
-            bar = "█" * pct + "░" * (30 - pct)
+            bar = "#" * pct + "-" * (30 - pct)
             print(f"\r[{bar}] {i}/{total}  {nom[:40]:<40}", end="", flush=True)
 
-            result = await chercher_entreprise(http, nom, dept)
+            result = await chercher_entreprise(http, nom, dept, address)
             if result:
                 infos = extraire_infos(result)
                 if not dry_run:
@@ -189,18 +269,20 @@ async def run(dept_filter: str | None, limit: int | None, dry_run: bool, delay: 
             await asyncio.sleep(delay)
 
     await conn.close()
-    print()  # saut de ligne après la barre
-    print(f"\nEnrichis : {enrichis}  |  Non trouves : {echecs}  |  Total traite : {total}")
+    print()
+    pct_enrichis = round(enrichis / total * 100) if total else 0
+    print(f"\nEnrichis : {enrichis}/{total} ({pct_enrichis}%)  |  Non trouves : {echecs}")
     if dry_run:
         print("   (dry-run -- aucune ecriture en base)")
 
 
 def main():
     parser = argparse.ArgumentParser(description="Enrichissement leads via API Entreprise")
-    parser.add_argument("--dept",    metavar="XX",  help="Limite à un département (ex: 06)")
-    parser.add_argument("--limit",   metavar="N",   type=int, help="Nombre max de leads à traiter")
-    parser.add_argument("--dry-run", action="store_true", help="Simule sans écrire en base")
-    parser.add_argument("--delay",   metavar="SEC", type=float, default=1.0, help="Délai entre appels API (défaut: 1s)")
+    parser.add_argument("--dept",    metavar="XX",  help="Limite a un departement (ex: 06)")
+    parser.add_argument("--limit",   metavar="N",   type=int, help="Nombre max de leads a traiter")
+    parser.add_argument("--dry-run", action="store_true", help="Simule sans ecrire en base")
+    parser.add_argument("--delay",   metavar="SEC", type=float, default=1.0,
+                        help="Delai entre appels API (defaut: 1s)")
     args = parser.parse_args()
 
     asyncio.run(run(args.dept, args.limit, args.dry_run, args.delay))
