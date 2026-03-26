@@ -654,7 +654,15 @@ document.getElementById('btn-export').addEventListener('click', async () => {
   const csv = 'sep=;\r\n' + [headers,...rows].map(row =>
     row.map(c => `"${String(c).replace(/"/g,'""')}"`).join(';')
   ).join('\r\n');
-  const blob = new Blob(['\ufeff'+csv], { type:'text/csv;charset=utf-8' });
+  // Encode en Windows-1252 : Excel Windows lit les CSV en cette locale par défaut.
+  // Les caractères hors-plage (rares) sont remplacés par '?'.
+  const W1252 = {8364:128,8218:130,402:131,8222:132,8230:133,8224:134,8225:135,710:136,8240:137,352:138,8249:139,338:140,381:142,8216:145,8217:146,8220:147,8221:148,8226:149,8211:150,8212:151,732:152,8482:153,353:154,8250:155,339:156,382:158,376:159};
+  const bytes = new Uint8Array(csv.length);
+  for (let i = 0; i < csv.length; i++) {
+    const c = csv.charCodeAt(i);
+    bytes[i] = c < 128 ? c : (c < 256 ? c : (W1252[c] ?? 63));
+  }
+  const blob = new Blob([bytes], { type: 'text/csv;charset=windows-1252' });
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href=url; a.download=`paysagistes_${TODAY}.csv`; a.click();
