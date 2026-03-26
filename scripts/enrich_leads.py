@@ -104,17 +104,22 @@ def est_bon_match(nom_recherche: str, result: dict, seuil: float = 0.35) -> bool
 # Extraction depuis la réponse API
 # ---------------------------------------------------------------------------
 
-def extraire_dirigeant(result: dict) -> str | None:
-    """Retourne 'Prénom NOM' du dirigeant principal, ou None."""
+def extraire_dirigeant(result: dict) -> tuple[str | None, str | None]:
+    """Retourne (prenom, nom) du dirigeant principal."""
     dirigeants = result.get("dirigeants", [])
     if not dirigeants:
-        return None
+        return None, None
     d = dirigeants[0]
-    prenom = (d.get("prenom") or "").strip().title()
-    nom    = (d.get("nom")    or "").strip().upper()
-    if nom:
-        return f"{prenom} {nom}".strip() if prenom else nom
-    return None
+
+    # "prenoms" contient tous les prénoms séparés par espace → on prend le premier
+    prenoms_raw = (d.get("prenoms") or d.get("prenom") or "").strip()
+    prenom = prenoms_raw.split()[0].title() if prenoms_raw else None
+
+    # "nom" peut contenir "NOM (NOM_USAGE)" → on retire la partie entre parenthèses
+    nom_raw = (d.get("nom") or "").strip()
+    nom = re.sub(r'\s*\(.*?\)', '', nom_raw).strip().upper() or None
+
+    return prenom, nom
 
 
 def extraire_forme_juridique(result: dict) -> str | None:
@@ -131,11 +136,13 @@ def extraire_infos(result: dict) -> dict:
     siret  = siege.get("siret", "") or siren
     date_c = result.get("date_creation") or siege.get("date_creation") or None
 
+    prenom, nom = extraire_dirigeant(result)
     return {
         "siret":           siret or None,
         "forme_juridique": extraire_forme_juridique(result),
         "date_creation":   date_c or None,
-        "nom_gerant":      extraire_dirigeant(result),
+        "prenom_gerant":   prenom,
+        "nom_gerant":      nom,
     }
 
 
@@ -210,6 +217,7 @@ async def run(dept_filter: str | None, limit: int | None, dry_run: bool, delay: 
     # Crée les colonnes si elles n'existent pas encore
     await conn.execute("""
         ALTER TABLE landscapers
+          ADD COLUMN IF NOT EXISTS prenom_gerant   TEXT,
           ADD COLUMN IF NOT EXISTS nom_gerant      TEXT,
           ADD COLUMN IF NOT EXISTS siret           TEXT,
           ADD COLUMN IF NOT EXISTS forme_juridique TEXT,
@@ -251,11 +259,13 @@ async def run(dept_filter: str | None, limit: int | None, dry_run: bool, delay: 
                 if not dry_run:
                     await conn.execute(
                         """UPDATE landscapers SET
-                            nom_gerant      = $1,
-                            siret           = $2,
-                            forme_juridique = $3,
-                            date_creation   = $4
-                        WHERE place_id = $5""",
+                            prenom_gerant   = $1,
+                            nom_gerant      = $2,
+                            siret           = $3,
+                            forme_juridique = $4,
+                            date_creation   = $5
+                        WHERE place_id = $6""",
+                        infos["prenom_gerant"],
                         infos["nom_gerant"],
                         infos["siret"],
                         infos["forme_juridique"],

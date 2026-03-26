@@ -67,7 +67,8 @@ CREATE POLICY crm_auth_update ON landscapers
 -- ============================================================
 
 ALTER TABLE landscapers
-  ADD COLUMN IF NOT EXISTS nom_gerant      TEXT,        -- dirigeant principal
+  ADD COLUMN IF NOT EXISTS prenom_gerant   TEXT,        -- prénom du dirigeant
+  ADD COLUMN IF NOT EXISTS nom_gerant      TEXT,        -- nom du dirigeant
   ADD COLUMN IF NOT EXISTS siret           TEXT,        -- SIRET ou SIREN
   ADD COLUMN IF NOT EXISTS forme_juridique TEXT,        -- SARL, EI, SAS…
   ADD COLUMN IF NOT EXISTS date_creation   TEXT;        -- date de création entreprise
