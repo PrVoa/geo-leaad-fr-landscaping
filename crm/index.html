@@ -651,9 +651,9 @@ document.getElementById('btn-export').addEventListener('click', async () => {
     r.statut||'nouveau', r.notes||'', r.rappel_le||'', r.assigne_a||'',
     r.maps_url||'', r.website||''
   ]);
-  const csv = 'sep=;\n' + [headers,...rows].map(row =>
+  const csv = 'sep=;\r\n' + [headers,...rows].map(row =>
     row.map(c => `"${String(c).replace(/"/g,'""')}"`).join(';')
-  ).join('\n');
+  ).join('\r\n');
   const blob = new Blob(['\ufeff'+csv], { type:'text/csv;charset=utf-8' });
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
