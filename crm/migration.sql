@@ -63,6 +63,19 @@ CREATE POLICY crm_auth_update ON landscapers
 -- Note : le scraper Python utilise le service_role (bypass RLS), pas besoin de policy INSERT/DELETE ici.
 
 -- ============================================================
+-- Migration Enrichissement — données entreprise
+-- ============================================================
+
+ALTER TABLE landscapers
+  ADD COLUMN IF NOT EXISTS nom_gerant      TEXT,        -- dirigeant principal
+  ADD COLUMN IF NOT EXISTS siret           TEXT,        -- SIRET ou SIREN
+  ADD COLUMN IF NOT EXISTS forme_juridique TEXT,        -- SARL, EI, SAS…
+  ADD COLUMN IF NOT EXISTS date_creation   TEXT;        -- date de création entreprise
+
+CREATE INDEX IF NOT EXISTS idx_landscapers_nom_gerant ON landscapers(nom_gerant);
+CREATE INDEX IF NOT EXISTS idx_landscapers_siret      ON landscapers(siret);
+
+-- ============================================================
 -- Migration ICP — Qualification paysagistes
 -- ============================================================
 
