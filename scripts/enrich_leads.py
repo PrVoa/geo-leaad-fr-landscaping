@@ -17,6 +17,11 @@ import re
 import sys
 from pathlib import Path
 
+# Force UTF-8 sur Windows (évite UnicodeEncodeError avec les accents et barres)
+if sys.platform == "win32":
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+
 import asyncpg
 import httpx
 from dotenv import load_dotenv
@@ -121,6 +126,15 @@ async def chercher_entreprise(
 async def run(dept_filter: str | None, limit: int | None, dry_run: bool, delay: float):
     conn = await asyncpg.connect(_DB_URL)
 
+    # Crée les colonnes si elles n'existent pas encore
+    await conn.execute("""
+        ALTER TABLE landscapers
+          ADD COLUMN IF NOT EXISTS nom_gerant      TEXT,
+          ADD COLUMN IF NOT EXISTS siret           TEXT,
+          ADD COLUMN IF NOT EXISTS forme_juridique TEXT,
+          ADD COLUMN IF NOT EXISTS date_creation   TEXT
+    """)
+
     # Récupère les leads sans nom_gerant
     where = "nom_gerant IS NULL AND name IS NOT NULL"
     if dept_filter:
@@ -135,7 +149,7 @@ async def run(dept_filter: str | None, limit: int | None, dry_run: bool, delay: 
     enrichis = 0
     echecs   = 0
 
-    print(f"{'[DRY-RUN] ' if dry_run else ''}🔍  {total} leads à enrichir")
+    print(f"{'[DRY-RUN] ' if dry_run else ''}>> {total} leads a enrichir")
     if not total:
         await conn.close()
         return
@@ -176,9 +190,9 @@ async def run(dept_filter: str | None, limit: int | None, dry_run: bool, delay: 
 
     await conn.close()
     print()  # saut de ligne après la barre
-    print(f"\n✅  Enrichis : {enrichis}  |  ❌ Non trouvés : {echecs}  |  Total traité : {total}")
+    print(f"\nEnrichis : {enrichis}  |  Non trouves : {echecs}  |  Total traite : {total}")
     if dry_run:
-        print("   (dry-run — aucune écriture en base)")
+        print("   (dry-run -- aucune ecriture en base)")
 
 
 def main():
