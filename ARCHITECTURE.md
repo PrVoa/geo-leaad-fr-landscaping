@@ -4,13 +4,52 @@
 
 ```
 GitHub (code source)
-    ↓ git pull
-Serveur VPS (exécution des agents Python)
-    ↓ asyncpg / SQLAlchemy
-Supabase (PostgreSQL — base de données)
-    ↑ Supabase JS SDK
-Lovable / CRM (interface web — crm/index.html)
+    ↓ git pull (geoleaad-sync.service — boucle 5 min)
+VPS Ubuntu 22.04 — 178.104.104.36
+    ├── nginx (443/80) → reverse proxy → :8000
+    ├── geoleaad-api.service  → uvicorn → FastAPI (api/main.py)
+    ├── geoleaad-sync.service → git_sync.sh (boucle infinie)
+    └── scheduler.py (processus user — 50 leads/jour)
+         ↕
+    Supabase PostgreSQL (asyncpg / Supabase JS SDK)
+         ↑
+    CRM (crm/index.html — déployé sur Vercel)
 ```
+
+---
+
+## Infrastructure serveur
+
+**VPS** : Ubuntu 22.04, 4 Go RAM, Hetzner (nbg1)
+**IP** : 178.104.104.36
+**URL publique** : https://178-104-104-36.sslip.io
+**SSL** : Let's Encrypt (certbot, renouvellement automatique)
+**Uptime moyen** : depuis le 23 mars 2026
+
+### Services systemd
+
+| Service | État | Rôle |
+|---|---|---|
+| `geoleaad-api.service` | enabled / running | FastAPI via uvicorn, port 8000 |
+| `geoleaad-sync.service` | enabled / running | git pull automatique toutes les 5 min |
+| `nginx.service` | enabled / running | Reverse proxy HTTPS → :8000 |
+
+### Nginx
+
+- Écoute sur 443 (HTTPS) et 80 (redirect)
+- `server_name`: 178-104-104-36.sslip.io
+- Proxy vers `http://127.0.0.1:8000`
+- Timeouts : 60s connect, 120s send/read
+- Logs : `/var/log/nginx/geoleaad-api.{access,error}.log`
+
+### Ports ouverts
+
+| Port | Service |
+|---|---|
+| 22 | SSH |
+| 80 | HTTP (redirect HTTPS) |
+| 443 | HTTPS (nginx) |
+| 8000 | FastAPI (localhost uniquement) |
 
 ---
 
@@ -20,118 +59,62 @@ Lovable / CRM (interface web — crm/index.html)
 
 | Fichier | Rôle |
 |---|---|
-| `.env` | Variables d'environnement locales (non committé) |
-| `.env.example` | Modèle `.env` à copier pour configurer le projet |
-| `requirements.txt` | Dépendances Python (`playwright`, `sqlalchemy`, `fastapi`, `asyncpg`…) |
+| `.env` | Variables d'environnement production (non committé) |
+| `.env.example` | Modèle `.env` à copier |
+| `requirements.txt` | Dépendances Python |
 | `README.md` | Guide d'installation et d'utilisation |
 | `ARCHITECTURE.md` | Ce fichier |
-| `setup_projet.ps1` | Script PowerShell d'installation sur Windows |
+| `git_sync.sh` | Script de synchronisation GitHub automatique (toutes les 5 min) |
 
 ### `scripts/` — Agents Python
 
 | Fichier | Rôle |
 |---|---|
-| `config.py` | Chargement `.env`, constantes globales (`DATABASE_URL`, `HEADLESS`, délais…) |
+| `config.py` | Chargement `.env`, constantes globales |
 | `models.py` | Modèle SQLAlchemy `Landscaper` (table `landscapers`) |
-| `init_db.py` | Création des tables en base — **lancer une seule fois** |
-| `test_connection.py` | Test de connexion PostgreSQL — diagnostic rapide |
-| `scraper.py` | Scraper manuel interactif par département |
-| `scrapers.py` | Fonctions partagées : Playwright, extraction fiches, détection blocage |
-| `scraper_fiche.py` | Extraction détaillée d'une fiche Google Maps (téléphone, site, email…) |
-| `scheduler.py` | **Agent principal** : grille géographique 0.3°×0.3°, scrape toute la France automatiquement |
+| `init_db.py` | Création des tables — **lancer une seule fois** |
+| `test_connection.py` | Test de connexion PostgreSQL |
+| `scheduler.py` | **Agent principal** : grille 0.3°×0.3°, 50 leads/jour automatique |
+| `scrapers.py` | Fonctions Playwright partagées (extraction fiches, détection blocage) |
+| `scraper_fiche.py` | Extraction détaillée d'une fiche Google Maps |
 | `clean_leads.py` | Nettoyage des doublons et données manquantes |
-| `enrich_leads.py` | Enrichissement : gérant, SIRET, forme juridique (via API externe) |
-| `debug_maps.py` | Outil de débogage Playwright pour inspecter les pages Google Maps |
-| `grid_tasks.json` | **État de progression** du scraping par cellule géographique (auto-généré) |
+| `enrich_leads.py` | Enrichissement : gérant, SIRET, forme juridique (API Entreprise) |
+| `debug_maps.py` | Outil de débogage Playwright |
+| `grid_tasks.json` | **État de progression** du scraping (auto-généré, modifié en continu) |
 
 ### `api/` — API FastAPI
 
 | Fichier | Rôle |
 |---|---|
-| `main.py` | API REST FastAPI : contrôle des agents (start/stop/status), accès aux leads et stats |
-| `start.sh` | Script bash pour lancer l'API en production avec uvicorn |
+| `main.py` | API REST FastAPI : start/stop/status agents, accès leads et stats |
+| `start.sh` | Lance uvicorn en production |
 
 ### `crm/` — Interface CRM
 
 | Fichier | Rôle |
 |---|---|
-| `index.html` | CRM complet en HTML/JS : liste des leads, filtres, changement de statut, notes, rappels, export CSV |
-| `migration.sql` | Migrations SQL à exécuter dans Supabase : ajout colonnes CRM, index, RLS, fonctions |
-| `vercel.json` | Configuration de déploiement Vercel pour le CRM |
+| `index.html` | CRM HTML/JS : leads, filtres, pipeline 16 statuts, notes, rappels, export CSV |
+| `migration.sql` | Migrations SQL Supabase (colonnes CRM, index, RLS, fonctions) |
+| `vercel.json` | Config déploiement Vercel |
 
 ### `logs/` — Journaux
 
-Créé automatiquement par l'API. Contient `scheduler.log`, `clean_leads.log`, `enrich_leads.log`.
+| Fichier | Rôle |
+|---|---|
+| `scheduler.log` | Logs du scraper principal (~5 Mo) |
+| `scheduler_nohup.log` | Sortie nohup du scraper (~600 Ko) |
+| `git_sync.log` | Logs du script de sync GitHub |
+| `clean_leads.log` | Logs nettoyage doublons |
+| `enrich_leads.log` | Logs enrichissement SIRET |
 
 ---
 
-## Ordre de lancement
-
-### 1. Installation (une seule fois)
-
-```bash
-pip install -r requirements.txt
-python -m playwright install --with-deps chromium
-cp .env.example .env
-# Remplir .env avec DATABASE_URL et API_KEY
-```
-
-### 2. Initialisation de la base (une seule fois)
-
-```bash
-python scripts/test_connection.py   # vérifie la connexion
-python scripts/init_db.py           # crée la table landscapers
-# Puis exécuter crm/migration.sql dans Supabase Dashboard → SQL Editor
-```
-
-### 3. Lancement de l'API
-
-```bash
-bash api/start.sh          # port 8000 par défaut
-# ou
-bash api/start.sh 8080     # port personnalisé
-```
-
-### 4. Lancement du scraper (via API ou directement)
-
-```bash
-# Via l'API (recommandé — piloté depuis Lovable)
-curl -X POST http://localhost:8000/agents/scraper/start \
-  -H "X-Api-Key: VOTRE_CLE"
-
-# Directement en ligne de commande
-python scripts/scheduler.py              # reprend la progression
-python scripts/scheduler.py --reset     # repart de zéro
-python scripts/scheduler.py --stats     # stats sans scraper
-python scripts/scheduler.py --missing   # zones sans leads uniquement
-```
-
-### 5. Nettoyage et enrichissement
-
-```bash
-python scripts/clean_leads.py    # à lancer après chaque batch de scraping
-python scripts/enrich_leads.py   # enrichissement SIRET/gérant
-```
-
----
-
-## Connexions entre composants
-
-### Variables d'environnement (`.env`)
-
-```
-DATABASE_URL=postgresql+asyncpg://...   → utilisé par scripts/ et api/
-API_KEY=...                              → authentification des appels à l'API FastAPI
-HEADLESS=true                            → Playwright (true = sans fenêtre)
-MIN_DELAY / MAX_DELAY                    → délais entre requêtes Google Maps
-```
-
-### Flux de données
+## Flux de données
 
 ```
 scheduler.py
-  → Playwright scrape Google Maps
-  → SQLAlchemy INSERT INTO landscapers (via DATABASE_URL)
+  → Playwright scrape Google Maps (Chromium headless)
+  → SQLAlchemy INSERT INTO landscapers (asyncpg → DATABASE_URL)
   → Supabase PostgreSQL
 
 api/main.py
@@ -139,14 +122,22 @@ api/main.py
   → GET  /leads                 → asyncpg SELECT FROM landscapers
   → GET  /stats                 → asyncpg COUNT / GROUP BY statut
 
-crm/index.html
-  → Supabase JS SDK (connexion directe à Supabase)
-  → SELECT landscapers (lecture des leads)
+crm/index.html (Vercel)
+  → Supabase JS SDK (connexion directe)
+  → SELECT landscapers (lecture leads, pagination 50/page)
   → UPDATE landscapers (statut, notes, rappel_le, assigne_a)
-  → Realtime subscriptions (mises à jour en direct)
+  → Realtime subscriptions
+
+git_sync.sh (geoleaad-sync.service)
+  → git fetch origin main → compare HEAD vs origin/main
+  → git pull si nouveaux commits
+  → systemctl restart geoleaad-api si api/ ou requirements.txt changés
+  → JAMAIS restart automatique de scheduler.py (intervention manuelle requise)
 ```
 
-### Authentification
+---
+
+## Authentification
 
 | Composant | Mécanisme |
 |---|---|
@@ -156,41 +147,84 @@ crm/index.html
 
 ---
 
-## Valeurs autorisées pour le champ `statut`
+## Pipeline CRM — 16 statuts
 
-Le CRM utilise ces valeurs exactes (sans accents) :
+| Valeur en base | Label affiché | Phase |
+|---|---|---|
+| `nouveau` | Nouveau | Entrant |
+| `hors_cible` | Hors cible | Qualification |
+| `ferme` | Fermé | Qualification |
+| `a_contacter` | À contacter | Qualification |
+| `pas_encore_approche` | Pas encore approché | Qualification |
+| `contacte` | Contacté | Approche |
+| `premier_message` | 1er msg — sans réponse | Approche |
+| `relance` | Relancé | Approche |
+| `en_discussion` | En discussion | Négociation |
+| `demo_planifiee` | Démo planifiée | Négociation |
+| `demo_faite` | Démo faite | Négociation |
+| `offre_envoyee` | Offre envoyée | Closing |
+| `gagne` | Gagné | Closing |
+| `perdu` | Perdu | Closing |
+| `sans_suite` | Sans suite | Archivé |
+| `trop_tot` | Trop tôt | Archivé |
 
-| Valeur en base | Label affiché |
-|---|---|
-| `nouveau` | Nouveau |
-| `contacte` | Contacté |
-| `interesse` | Intéressé |
-| `client` | Client |
-| `perdu` | Perdu |
-
-> **Important** : si une contrainte CHECK existe sur la colonne `statut` dans Supabase,
-> elle doit autoriser exactement ces 5 valeurs. Voir section "Bug statut" ci-dessous.
+> **Important** : toute contrainte CHECK sur `statut` dans Supabase doit autoriser ces 16 valeurs exactes.
 
 ---
 
-## Bug connu : erreur de contrainte sur le statut
+## Variables d'environnement (`.env`)
+
+```
+DATABASE_URL=postgresql+asyncpg://...   → asyncpg (scripts/ et api/)
+API_KEY=...                              → authentification API FastAPI
+HEADLESS=true                            → Playwright (true = sans fenêtre)
+SEARCH_TERM=paysagistes                  → terme de recherche Google Maps
+MIN_DELAY / MAX_DELAY                    → délais entre requêtes (secondes)
+LOG_LEVEL=INFO                           → niveau de log
+```
+
+---
+
+## Commandes de gestion production
+
+```bash
+# Services
+systemctl status geoleaad-api geoleaad-sync
+systemctl restart geoleaad-api
+journalctl -fu geoleaad-api
+tail -f /opt/geo-leaad-fr-landscaping/logs/git_sync.log
+
+# Scraper (gestion manuelle)
+ps aux | grep scheduler.py
+pkill -f "scheduler.py"
+nohup python scripts/scheduler.py > logs/scheduler_nohup.log 2>&1 &
+
+# API (test)
+curl -H "X-Api-Key: VOTRE_CLE" https://178-104-104-36.sslip.io/stats
+
+# Nettoyage / enrichissement
+source .venv/bin/activate
+python scripts/clean_leads.py
+python scripts/enrich_leads.py
+```
+
+---
+
+## Bug connu : contrainte CHECK sur statut
 
 **Symptôme** : `new row for relation "landscapers" violates check constraint "landscapers_statut_check"`
 
-**Cause** : Une contrainte CHECK a été créée sur la colonne `statut` (probablement via Lovable)
-avec des valeurs différentes de celles utilisées par le CRM.
+**Cause** : Contrainte CHECK créée avec un jeu de valeurs incomplet (avant le pipeline 16 statuts).
 
-**Correction** — exécuter dans Supabase Dashboard → SQL Editor :
+**Correction** — dans Supabase Dashboard → SQL Editor :
 
 ```sql
--- Vérifier les valeurs actuelles de la contrainte
-SELECT pg_get_constraintdef(c.oid)
-FROM pg_constraint c
-JOIN pg_class t ON t.oid = c.conrelid
-WHERE t.relname = 'landscapers' AND c.conname = 'landscapers_statut_check';
-
--- Supprimer l'ancienne contrainte et la recréer avec les bonnes valeurs
-ALTER TABLE landscapers DROP CONSTRAINT landscapers_statut_check;
+ALTER TABLE landscapers DROP CONSTRAINT IF EXISTS landscapers_statut_check;
 ALTER TABLE landscapers ADD CONSTRAINT landscapers_statut_check
-  CHECK (statut IN ('nouveau', 'contacte', 'interesse', 'client', 'perdu'));
+  CHECK (statut IN (
+    'nouveau','hors_cible','ferme','a_contacter','pas_encore_approche',
+    'contacte','premier_message','relance','en_discussion',
+    'demo_planifiee','demo_faite','offre_envoyee',
+    'gagne','perdu','sans_suite','trop_tot'
+  ));
 ```
