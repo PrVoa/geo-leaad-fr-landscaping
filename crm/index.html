@@ -16,11 +16,22 @@
     --muted: #718096;
     --primary: #3b82f6;
     --danger: #ef4444;
-    --s-nouveau:   #94a3b8;
-    --s-contacte:  #3b82f6;
-    --s-interesse: #f97316;
-    --s-client:    #22c55e;
-    --s-perdu:     #ef4444;
+    --s-nouveau:            #94a3b8;
+    --s-hors_cible:         #64748b;
+    --s-ferme:              #475569;
+    --s-a_contacter:        #0ea5e9;
+    --s-pas_encore_approche:#8b5cf6;
+    --s-contacte:           #3b82f6;
+    --s-premier_message:    #6366f1;
+    --s-relance:            #a855f7;
+    --s-en_discussion:      #f97316;
+    --s-demo_planifiee:     #f59e0b;
+    --s-demo_faite:         #eab308;
+    --s-offre_envoyee:      #84cc16;
+    --s-gagne:              #22c55e;
+    --s-perdu:              #ef4444;
+    --s-sans_suite:         #f43f5e;
+    --s-trop_tot:           #14b8a6;
   }
 
   body { font-family: 'Segoe UI', system-ui, sans-serif; background: var(--bg); color: var(--text); }
@@ -48,13 +59,17 @@
     border: 1px solid transparent;
     cursor: pointer;
   }
-  .stat-chip.total    { background: #e2e8f0; color: #475569; }
-  .stat-chip.today    { background: #dbeafe; color: #1d4ed8; }
-  .stat-chip.nouveau  { background: #f1f5f9; color: #475569; border-color: var(--s-nouveau); }
-  .stat-chip.contacte { background: #eff6ff; color: #2563eb; border-color: var(--s-contacte); }
-  .stat-chip.interesse{ background: #fff7ed; color: #c2410c; border-color: var(--s-interesse); }
-  .stat-chip.client   { background: #f0fdf4; color: #15803d; border-color: var(--s-client); }
-  .stat-chip.perdu    { background: #fef2f2; color: #b91c1c; border-color: var(--s-perdu); }
+  .stat-chip.total          { background: #e2e8f0; color: #475569; }
+  .stat-chip.today          { background: #dbeafe; color: #1d4ed8; }
+  .stat-chip.nouveau        { background: #f1f5f9; color: #475569;  border-color: var(--s-nouveau); }
+  .stat-chip.hors_cible     { background: #f1f5f9; color: #334155;  border-color: var(--s-hors_cible); }
+  .stat-chip.a_contacter    { background: #e0f2fe; color: #0369a1;  border-color: var(--s-a_contacter); }
+  .stat-chip.en_discussion  { background: #fff7ed; color: #c2410c;  border-color: var(--s-en_discussion); }
+  .stat-chip.demo_planifiee { background: #fffbeb; color: #92400e;  border-color: var(--s-demo_planifiee); }
+  .stat-chip.offre_envoyee  { background: #f7fee7; color: #3f6212;  border-color: var(--s-offre_envoyee); }
+  .stat-chip.gagne          { background: #f0fdf4; color: #15803d;  border-color: var(--s-gagne); }
+  .stat-chip.perdu          { background: #fef2f2; color: #b91c1c;  border-color: var(--s-perdu); }
+  .stat-chip.trop_tot       { background: #f0fdfa; color: #0f766e;  border-color: var(--s-trop_tot); }
 
   #realtime-dot {
     width: 8px; height: 8px; border-radius: 50%;
@@ -162,11 +177,22 @@
     display: inline-block; padding: 2px 9px; border-radius: 999px;
     font-size: .73rem; font-weight: 600; cursor: pointer; user-select: none; white-space: nowrap;
   }
-  .badge.nouveau   { background: #f1f5f9; color: #475569; }
-  .badge.contacte  { background: #eff6ff; color: #2563eb; }
-  .badge.interesse { background: #fff7ed; color: #c2410c; }
-  .badge.client    { background: #f0fdf4; color: #15803d; }
-  .badge.perdu     { background: #fef2f2; color: #b91c1c; }
+  .badge.nouveau            { background: #f1f5f9; color: #475569; }
+  .badge.hors_cible         { background: #f1f5f9; color: #334155; }
+  .badge.ferme              { background: #f8fafc; color: #334155; }
+  .badge.a_contacter        { background: #e0f2fe; color: #0369a1; }
+  .badge.pas_encore_approche{ background: #ede9fe; color: #5b21b6; }
+  .badge.contacte           { background: #eff6ff; color: #1d4ed8; }
+  .badge.premier_message    { background: #eef2ff; color: #3730a3; }
+  .badge.relance            { background: #faf5ff; color: #6b21a8; }
+  .badge.en_discussion      { background: #fff7ed; color: #c2410c; }
+  .badge.demo_planifiee     { background: #fffbeb; color: #92400e; }
+  .badge.demo_faite         { background: #fefce8; color: #713f12; }
+  .badge.offre_envoyee      { background: #f7fee7; color: #3f6212; }
+  .badge.gagne              { background: #f0fdf4; color: #15803d; }
+  .badge.perdu              { background: #fef2f2; color: #b91c1c; }
+  .badge.sans_suite         { background: #fff1f2; color: #9f1239; }
+  .badge.trop_tot           { background: #f0fdfa; color: #0f766e; }
 
   select.status-select {
     font-size: .75rem; border: 1px solid var(--border); border-radius: 6px;
@@ -273,13 +299,16 @@
 <header>
   <h1>🌿 CRM Paysagistes</h1>
   <div class="stats-bar" id="stats-bar">
-    <span class="stat-chip total"     id="s-total">—</span>
-    <span class="stat-chip today"     id="s-today">—</span>
-    <span class="stat-chip nouveau"   id="s-nouveau" data-statut="nouveau">—</span>
-    <span class="stat-chip contacte"  id="s-contacte" data-statut="contacte">—</span>
-    <span class="stat-chip interesse" id="s-interesse" data-statut="interesse">—</span>
-    <span class="stat-chip client"    id="s-client" data-statut="client">—</span>
-    <span class="stat-chip perdu"     id="s-perdu" data-statut="perdu">—</span>
+    <span class="stat-chip total"         id="s-total">—</span>
+    <span class="stat-chip today"         id="s-today">—</span>
+    <span class="stat-chip a_contacter"   id="s-a_contacter"   data-statut="a_contacter">—</span>
+    <span class="stat-chip en_discussion" id="s-en_discussion" data-statut="en_discussion">—</span>
+    <span class="stat-chip demo_planifiee"id="s-demo_planifiee" data-statut="demo_planifiee">—</span>
+    <span class="stat-chip offre_envoyee" id="s-offre_envoyee" data-statut="offre_envoyee">—</span>
+    <span class="stat-chip gagne"         id="s-gagne"         data-statut="gagne">—</span>
+    <span class="stat-chip perdu"         id="s-perdu"         data-statut="perdu">—</span>
+    <span class="stat-chip trop_tot"      id="s-trop_tot"      data-statut="trop_tot">—</span>
+    <span class="stat-chip hors_cible"    id="s-hors_cible"    data-statut="hors_cible">—</span>
   </div>
   <div id="user-info">
     <span id="user-name"></span>
@@ -292,11 +321,32 @@
   <input type="search" id="search" placeholder="Nom, tél, email, adresse…" />
   <select id="f-statut">
     <option value="">Tous les statuts</option>
-    <option value="nouveau">Nouveau</option>
-    <option value="contacte">Contacté</option>
-    <option value="interesse">Intéressé</option>
-    <option value="client">Client</option>
-    <option value="perdu">Perdu</option>
+    <optgroup label="── Qualification ──">
+      <option value="nouveau">Nouveau</option>
+      <option value="hors_cible">Hors cible</option>
+      <option value="ferme">Fermé</option>
+    </optgroup>
+    <optgroup label="── À contacter ──">
+      <option value="a_contacter">À contacter</option>
+      <option value="pas_encore_approche">Pas encore approché</option>
+    </optgroup>
+    <optgroup label="── Prospection ──">
+      <option value="contacte">Contacté</option>
+      <option value="premier_message">1er msg — sans réponse</option>
+      <option value="relance">Relancé</option>
+    </optgroup>
+    <optgroup label="── Pipeline ──">
+      <option value="en_discussion">En discussion</option>
+      <option value="demo_planifiee">Démo planifiée</option>
+      <option value="demo_faite">Démo faite</option>
+      <option value="offre_envoyee">Offre envoyée</option>
+    </optgroup>
+    <optgroup label="── Résultat ──">
+      <option value="gagne">Gagné</option>
+      <option value="perdu">Perdu</option>
+      <option value="sans_suite">Sans suite</option>
+      <option value="trop_tot">Trop tôt</option>
+    </optgroup>
   </select>
   <select id="f-dept"><option value="">Tous les depts</option></select>
   <label class="filter-check"><input type="checkbox" id="f-has-email" /> A un email</label>
@@ -318,11 +368,15 @@
   <span id="bulk-count">0 sélectionnés</span>
   <span style="opacity:.5">|</span>
   <span style="font-size:.8rem">Changer statut :</span>
-  <button class="bulk-btn" data-statut="contacte">Contacté</button>
-  <button class="bulk-btn" data-statut="interesse">Intéressé</button>
-  <button class="bulk-btn" data-statut="client">Client</button>
+  <button class="bulk-btn" data-statut="a_contacter">À contacter</button>
+  <button class="bulk-btn" data-statut="premier_message">1er msg envoyé</button>
+  <button class="bulk-btn" data-statut="relance">Relancé</button>
+  <button class="bulk-btn" data-statut="en_discussion">En discussion</button>
+  <button class="bulk-btn" data-statut="offre_envoyee">Offre envoyée</button>
+  <button class="bulk-btn" data-statut="gagne">Gagné</button>
   <button class="bulk-btn" data-statut="perdu">Perdu</button>
-  <button class="bulk-btn" data-statut="nouveau">Nouveau</button>
+  <button class="bulk-btn" data-statut="sans_suite">Sans suite</button>
+  <button class="bulk-btn" data-statut="trop_tot">Trop tôt</button>
   <button id="bulk-cancel">✕ Annuler</button>
 </div>
 
@@ -368,8 +422,31 @@
 const SUPABASE_URL      = 'https://tzwrzkiqdkcgaqnxntyt.supabase.co';
 const SUPABASE_ANON_KEY = 'sb_publishable_1qXmP6t8kV5Kl5LhfPcEog_iMAR3pI6';
 
-const STATUTS = ['nouveau','contacte','interesse','client','perdu'];
-const LABEL   = { nouveau:'Nouveau', contacte:'Contacté', interesse:'Intéressé', client:'Client', perdu:'Perdu' };
+const STATUTS = [
+  'nouveau','hors_cible','ferme',
+  'a_contacter','pas_encore_approche',
+  'contacte','premier_message','relance',
+  'en_discussion','demo_planifiee','demo_faite',
+  'offre_envoyee','gagne','perdu','sans_suite','trop_tot'
+];
+const LABEL = {
+  nouveau:             'Nouveau',
+  hors_cible:          'Hors cible',
+  ferme:               'Fermé',
+  a_contacter:         'À contacter',
+  pas_encore_approche: 'Pas encore approché',
+  contacte:            'Contacté',
+  premier_message:     '1er msg — sans réponse',
+  relance:             'Relancé',
+  en_discussion:       'En discussion',
+  demo_planifiee:      'Démo planifiée',
+  demo_faite:          'Démo faite',
+  offre_envoyee:       'Offre envoyée',
+  gagne:               'Gagné',
+  perdu:               'Perdu',
+  sans_suite:          'Sans suite',
+  trop_tot:            'Trop tôt',
+};
 const TODAY   = new Date().toISOString().slice(0,10);
 
 const { createClient } = supabase;
@@ -676,9 +753,12 @@ async function loadStats() {
     document.getElementById('s-total').textContent = `${(total||0).toLocaleString('fr-FR')} total`;
     const { count: today } = await db.from('landscapers').select('place_id',{count:'exact',head:true}).gte('scraped_at',TODAY+'T00:00:00');
     document.getElementById('s-today').textContent = `+${today||0} aujourd'hui`;
-    for (const s of STATUTS) {
+    const HEADER_STATUTS = ['a_contacter','en_discussion','demo_planifiee','offre_envoyee','gagne','perdu','trop_tot','hors_cible'];
+    for (const s of HEADER_STATUTS) {
+      const el = document.getElementById(`s-${s}`);
+      if (!el) continue;
       const { count } = await db.from('landscapers').select('place_id',{count:'exact',head:true}).eq('statut',s);
-      document.getElementById(`s-${s}`).textContent = `${LABEL[s]} ${count||0}`;
+      el.textContent = `${LABEL[s]} ${count||0}`;
     }
   } catch (_) {}
 }
