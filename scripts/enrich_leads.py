@@ -38,7 +38,11 @@ _DB_URL = DATABASE_URL.replace("postgresql+asyncpg://", "postgresql://").replace
     "postgres+asyncpg://", "postgresql://"
 )
 
-API_URL = "https://recherche-entreprises.api.gouv.fr/search"
+API_URL     = "https://recherche-entreprises.api.gouv.fr/search"
+API_URL_ALT = "https://api.annuaire-entreprises.data.gouv.fr/search"
+
+# Regex SIRET (14 chiffres, éventuellement groupés par espaces ou tirets)
+_SIRET_RE = re.compile(r'\b(\d[\d \-]{12,16}\d)\b')
 
 # Formes juridiques à retirer du nom avant la recherche
 _FORMES_RE = re.compile(
@@ -158,20 +162,47 @@ def extraire_dept_adresse(address: str | None) -> str | None:
     return m.group(1)[:2] if m else None
 
 
+async def tester_api(url: str, timeout: float = 5.0) -> bool:
+    """Retourne True si l'URL API répond correctement."""
+    try:
+        async with httpx.AsyncClient() as client:
+            r = await client.get(url, params={"q": "test", "limite": 1}, timeout=timeout)
+            return r.status_code < 500
+    except Exception:
+        return False
+
+
 async def _appel_api(
     client: httpx.AsyncClient,
     q: str,
     dept: str | None,
+    url: str = API_URL,
 ) -> list[dict]:
     params: dict = {"q": q, "limite": 5, "page": 1}
     if dept:
         params["departement"] = dept  # filtre côté API
     try:
-        r = await client.get(API_URL, params=params, timeout=10)
+        r = await client.get(url, params=params, timeout=10)
         r.raise_for_status()
         return r.json().get("results", [])
-    except httpx.HTTPError:
+    except Exception:
         return []
+
+
+async def extraire_siret_depuis_site(client: httpx.AsyncClient, website: str) -> str | None:
+    """Tente d'extraire un SIRET (14 chiffres) depuis la page d'accueil du site."""
+    if not website or not website.startswith("http"):
+        return None
+    try:
+        r = await client.get(website, timeout=8.0, follow_redirects=True)
+        # Cherche un bloc de 14 chiffres consécutifs (SIRET)
+        for m in _SIRET_RE.finditer(r.text):
+            digits = re.sub(r'[\s\-]', '', m.group(1))
+            if len(digits) == 14 and digits.isdigit():
+                return digits
+    except Exception:
+        pass
+    return None
 
 
 async def chercher_entreprise(
@@ -179,6 +210,7 @@ async def chercher_entreprise(
     nom: str,
     dept: str | None,
     address: str | None = None,
+    api_url: str = API_URL,
 ) -> dict | None:
     """
     Cascade de variantes : nom original → nom nettoyé → premier mot.
@@ -188,7 +220,7 @@ async def chercher_entreprise(
     dept = dept or extraire_dept_adresse(address)
 
     for variante in variantes_nom(nom):
-        results = await _appel_api(client, variante, dept)
+        results = await _appel_api(client, variante, dept, url=api_url)
         if not results:
             continue
 
@@ -212,6 +244,19 @@ async def chercher_entreprise(
 # ---------------------------------------------------------------------------
 
 async def run(dept_filter: str | None, limit: int | None, dry_run: bool, delay: float):
+    # ── Test de connectivité API au démarrage ──
+    api_url: str | None = None
+    print("  Vérification de l'API gouvernementale...", end=" ", flush=True)
+    if await tester_api(API_URL):
+        api_url = API_URL
+        print(f"OK ({API_URL})")
+    elif await tester_api(API_URL_ALT):
+        api_url = API_URL_ALT
+        print(f"OK (fallback: {API_URL_ALT})")
+    else:
+        print("INACCESSIBLE")
+        print("⚠️  API gouvernementale inaccessible - enrichissement API désactivé (fallback SIRET depuis site web uniquement)")
+
     conn = await asyncpg.connect(_DB_URL)
 
     # Crée les colonnes si elles n'existent pas encore
@@ -229,13 +274,14 @@ async def run(dept_filter: str | None, limit: int | None, dry_run: bool, delay: 
         where += f" AND dept = '{dept_filter}'"
 
     rows = await conn.fetch(
-        f"SELECT place_id, name, dept, address FROM landscapers WHERE {where} ORDER BY scraped_at DESC"
+        f"SELECT place_id, name, dept, address, website FROM landscapers WHERE {where} ORDER BY scraped_at DESC"
         + (f" LIMIT {limit}" if limit else "")
     )
 
-    total    = len(rows)
-    enrichis = 0
-    echecs   = 0
+    total         = len(rows)
+    enrichis      = 0
+    echecs        = 0
+    siret_website = 0
 
     print(f"{'[DRY-RUN] ' if dry_run else ''}>> {total} leads a enrichir")
     if not total:
@@ -248,12 +294,16 @@ async def run(dept_filter: str | None, limit: int | None, dry_run: bool, delay: 
             pid     = row["place_id"]
             dept    = row["dept"]
             address = row["address"]
+            website = row["website"] if "website" in row.keys() else None
 
             pct = int(i / total * 30)
             bar = "#" * pct + "-" * (30 - pct)
             print(f"\r[{bar}] {i}/{total}  {nom[:40]:<40}", end="", flush=True)
 
-            result = await chercher_entreprise(http, nom, dept, address)
+            result = None
+            if api_url:
+                result = await chercher_entreprise(http, nom, dept, address, api_url=api_url)
+
             if result:
                 infos = extraire_infos(result)
                 if not dry_run:
@@ -274,7 +324,21 @@ async def run(dept_filter: str | None, limit: int | None, dry_run: bool, delay: 
                     )
                 enrichis += 1
             else:
-                echecs += 1
+                # Fallback : tenter d'extraire le SIRET depuis le site web
+                if website:
+                    siret = await extraire_siret_depuis_site(http, website)
+                    if siret:
+                        if not dry_run:
+                            await conn.execute(
+                                "UPDATE landscapers SET siret = $1 WHERE place_id = $2",
+                                siret, pid,
+                            )
+                        siret_website += 1
+                        enrichis += 1
+                    else:
+                        echecs += 1
+                else:
+                    echecs += 1
 
             await asyncio.sleep(delay)
 
@@ -282,6 +346,8 @@ async def run(dept_filter: str | None, limit: int | None, dry_run: bool, delay: 
     print()
     pct_enrichis = round(enrichis / total * 100) if total else 0
     print(f"\nEnrichis : {enrichis}/{total} ({pct_enrichis}%)  |  Non trouves : {echecs}")
+    if siret_website:
+        print(f"   dont {siret_website} via extraction site web (SIRET uniquement)")
     if dry_run:
         print("   (dry-run -- aucune ecriture en base)")
 

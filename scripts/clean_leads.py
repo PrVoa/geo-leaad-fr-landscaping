@@ -215,6 +215,20 @@ def classifier_local(name: str) -> tuple[str | None, str]:
 # NIVEAU 3 — Vérification API gouvernementale
 # ---------------------------------------------------------------------------
 
+async def tester_api(timeout: float = 5.0) -> bool:
+    """Retourne True si l'API gouvernementale est joignable."""
+    try:
+        async with httpx.AsyncClient() as client:
+            r = await client.get(
+                API_ENTREPRISES,
+                params={"q": "test", "limit": 1},
+                timeout=timeout,
+            )
+            return r.status_code < 500
+    except Exception:
+        return False
+
+
 async def verifier_api(client: httpx.AsyncClient, name: str) -> tuple[str, str]:
     """
     Retourne (decision, raison).
@@ -274,6 +288,11 @@ async def verifier_api(client: httpx.AsyncClient, name: str) -> tuple[str, str]:
 # ---------------------------------------------------------------------------
 
 async def run(dept_filter: str | None, dry_run: bool):
+    # ── Test de connectivité API au démarrage ──
+    api_disponible = await tester_api(timeout=5.0)
+    if not api_disponible:
+        log.warning("⚠️  API gouvernementale inaccessible - mode mots-clés uniquement (niveaux 1 et 2)")
+
     conn = await asyncpg.connect(_DB_URL)
 
     where_clauses = ["(statut = 'nouveau' OR statut IS NULL)"]
@@ -310,44 +329,51 @@ async def run(dept_filter: str | None, dry_run: bool):
         else:
             ambigus.append(dict(row))
 
-    print(f"  Après niveaux 1&2 : {len(a_garder)} gardés / {len(a_exclure)} exclus / {len(ambigus)} ambigus → API")
+    if api_disponible:
+        print(f"  Après niveaux 1&2 : {len(a_garder)} gardés / {len(a_exclure)} exclus / {len(ambigus)} ambigus → API")
+    else:
+        print(f"  Après niveaux 1&2 : {len(a_garder)} gardés / {len(a_exclure)} exclus / {len(ambigus)} ambigus laissés 'nouveau' (API indisponible)")
 
     # ── Étape 3 : vérification API par batch de 100 ──
     nb_api_garder = 0
     nb_api_exclu  = 0
     nb_api_doute  = 0
 
-    async with httpx.AsyncClient() as client:
-        for i in range(0, len(ambigus), 100):
-            batch = ambigus[i:i + 100]
-            print(f"\n  Batch API {i + 1}–{i + len(batch)} / {len(ambigus)}...")
-            for row in batch:
-                name = row["name"] or ""
-                decision, raison = await verifier_api(client, name)
-                if decision == "garder":
-                    a_garder[row["place_id"]] = raison
-                    nb_api_garder += 1
-                    log.info("API→GARDER  %-50s  %s", name[:50], raison)
-                elif decision == "exclu":
-                    a_exclure[row["place_id"]] = raison
-                    nb_api_exclu += 1
-                    log.info("API→EXCLU   %-50s  %s", name[:50], raison)
-                else:
-                    a_doute[row["place_id"]] = raison
-                    nb_api_doute += 1
-                    log.info("API→DOUTE   %-50s  %s", name[:50], raison)
-                await asyncio.sleep(0.5)
+    if api_disponible:
+        async with httpx.AsyncClient() as client:
+            for i in range(0, len(ambigus), 100):
+                batch = ambigus[i:i + 100]
+                print(f"\n  Batch API {i + 1}–{i + len(batch)} / {len(ambigus)}...")
+                for row in batch:
+                    name = row["name"] or ""
+                    decision, raison = await verifier_api(client, name)
+                    if decision == "garder":
+                        a_garder[row["place_id"]] = raison
+                        nb_api_garder += 1
+                        log.info("API→GARDER  %-50s  %s", name[:50], raison)
+                    elif decision == "exclu":
+                        a_exclure[row["place_id"]] = raison
+                        nb_api_exclu += 1
+                        log.info("API→EXCLU   %-50s  %s", name[:50], raison)
+                    else:
+                        a_doute[row["place_id"]] = raison
+                        nb_api_doute += 1
+                        log.info("API→DOUTE   %-50s  %s", name[:50], raison)
+                    await asyncio.sleep(0.5)
 
     # ── Résumé ──
     print(f"\n{'─' * 60}")
     print(f"  Total analysé    : {total}")
     print(f"  Gardés (nv 1&2)  : {len(a_garder) - nb_api_garder}")
     print(f"  Exclus (nv 1&2)  : {len(a_exclure) - nb_api_exclu}")
-    print(f"  Vérifiés API     : {len(ambigus)}")
-    print(f"    └ gardés        : {nb_api_garder}")
-    print(f"    └ exclus        : {nb_api_exclu}")
-    print(f"    └ douteux       : {nb_api_doute}  (laissés 'nouveau')")
-    print(f"  Total gardés     : {len(a_garder) + nb_api_doute}")
+    if api_disponible:
+        print(f"  Vérifiés API     : {len(ambigus)}")
+        print(f"    └ gardés        : {nb_api_garder}")
+        print(f"    └ exclus        : {nb_api_exclu}")
+        print(f"    └ douteux       : {nb_api_doute}  (laissés 'nouveau')")
+    else:
+        print(f"  Ambigus (nv 3)   : {len(ambigus)}  (API indisponible → laissés 'nouveau')")
+    print(f"  Total gardés     : {len(a_garder) + nb_api_doute + (len(ambigus) if not api_disponible else 0)}")
     print(f"  Total exclus     : {len(a_exclure)}")
     print(f"{'─' * 60}\n")
 
