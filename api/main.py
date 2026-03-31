@@ -10,10 +10,11 @@ Lancement :
 """
 import asyncio
 import os
-import signal
 import subprocess
 import sys
+import time
 from collections import deque
+from contextlib import asynccontextmanager
 from datetime import datetime, date
 from pathlib import Path
 from typing import Optional
@@ -42,14 +43,37 @@ LOGS_DIR = ROOT / "logs"
 PYTHON = sys.executable
 
 # ---------------------------------------------------------------------------
+# Pool unique — créé une seule fois au démarrage, max 3 connexions
+# ---------------------------------------------------------------------------
+
+_pool: Optional[asyncpg.Pool] = None
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    global _pool
+    if _asyncpg_url:
+        _pool = await asyncpg.create_pool(
+            _asyncpg_url,
+            min_size=1,
+            max_size=3,
+            command_timeout=10,
+        )
+    yield
+    if _pool:
+        await _pool.close()
+        _pool = None
+
+
+# ---------------------------------------------------------------------------
 # FastAPI app
 # ---------------------------------------------------------------------------
 
-app = FastAPI(title="GeoLeaad API", version="1.0.0")
+app = FastAPI(title="GeoLeaad API", version="1.1.0", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],          # Lovable peut venir de n'importe quel sous-domaine
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -77,14 +101,13 @@ class AgentState:
         self.name = name
         self.process: Optional[subprocess.Popen] = None
         self.started_at: Optional[datetime] = None
-        self.dept: Optional[str] = None          # pour le scraper uniquement
+        self.dept: Optional[str] = None
 
     @property
     def running(self) -> bool:
         return self.process is not None and self.process.poll() is None
 
     def stop(self) -> bool:
-        """Envoie SIGTERM au processus. Retourne True si un signal a été envoyé."""
         if not self.running:
             return False
         try:
@@ -114,30 +137,47 @@ enrich_state = AgentState("enrich_leads")
 
 
 # ---------------------------------------------------------------------------
-# Helpers DB
+# Helpers DB — réutilise le pool unique, libère la connexion après chaque usage
 # ---------------------------------------------------------------------------
 
-async def get_db_pool() -> asyncpg.Pool:
-    """Crée un pool asyncpg (connexion légère, fermée après usage)."""
-    if not _asyncpg_url:
-        raise HTTPException(status_code=500, detail="DATABASE_URL non configurée")
-    return await asyncpg.create_pool(_asyncpg_url, min_size=1, max_size=3)
+async def _pool_or_error() -> asyncpg.Pool:
+    if not _pool:
+        raise HTTPException(status_code=500, detail="Pool DB non initialisé")
+    return _pool
 
 
 async def query_one(sql: str, *args):
-    pool = await get_db_pool()
+    pool = await _pool_or_error()
     async with pool.acquire() as conn:
-        row = await conn.fetchrow(sql, *args)
-    await pool.close()
-    return row
+        return await conn.fetchrow(sql, *args)
 
 
 async def query_all(sql: str, *args):
-    pool = await get_db_pool()
+    pool = await _pool_or_error()
     async with pool.acquire() as conn:
-        rows = await conn.fetch(sql, *args)
-    await pool.close()
-    return rows
+        return await conn.fetch(sql, *args)
+
+
+# ---------------------------------------------------------------------------
+# Cache mémoire 30 secondes — évite les requêtes répétées de Lovable
+# ---------------------------------------------------------------------------
+
+class SimpleCache:
+    def __init__(self, ttl: float = 30.0):
+        self._ttl = ttl
+        self._store: dict[str, tuple[float, object]] = {}
+
+    def get(self, key: str):
+        entry = self._store.get(key)
+        if entry and (time.monotonic() - entry[0]) < self._ttl:
+            return entry[1]
+        return None
+
+    def set(self, key: str, value):
+        self._store[key] = (time.monotonic(), value)
+
+
+_cache = SimpleCache(ttl=30.0)
 
 
 # ---------------------------------------------------------------------------
@@ -205,6 +245,22 @@ async def clean_start():
     return {"status": "started", "pid": clean_state.process.pid}
 
 
+@app.post("/agents/clean/stop", dependencies=[Security(verify_api_key)])
+async def clean_stop():
+    if not clean_state.stop():
+        raise HTTPException(status_code=409, detail="L'agent clean n'est pas en cours")
+    return {"status": "stopping", "pid": clean_state.process.pid}
+
+
+@app.get("/agents/clean/status", dependencies=[Security(verify_api_key)])
+async def clean_status():
+    return {
+        "running": clean_state.running,
+        "started_at": clean_state.started_at.isoformat() if clean_state.started_at else None,
+        "pid": clean_state.process.pid if clean_state.process else None,
+    }
+
+
 # ---------------------------------------------------------------------------
 # Endpoints — Enrich
 # ---------------------------------------------------------------------------
@@ -216,8 +272,24 @@ async def enrich_start():
     return {"status": "started", "pid": enrich_state.process.pid}
 
 
+@app.post("/agents/enrich/stop", dependencies=[Security(verify_api_key)])
+async def enrich_stop():
+    if not enrich_state.stop():
+        raise HTTPException(status_code=409, detail="L'agent enrich n'est pas en cours")
+    return {"status": "stopping", "pid": enrich_state.process.pid}
+
+
+@app.get("/agents/enrich/status", dependencies=[Security(verify_api_key)])
+async def enrich_status():
+    return {
+        "running": enrich_state.running,
+        "started_at": enrich_state.started_at.isoformat() if enrich_state.started_at else None,
+        "pid": enrich_state.process.pid if enrich_state.process else None,
+    }
+
+
 # ---------------------------------------------------------------------------
-# Endpoint — Leads
+# Endpoint — Leads (avec cache 30s)
 # ---------------------------------------------------------------------------
 
 @app.get("/leads", dependencies=[Security(verify_api_key)])
@@ -228,6 +300,11 @@ async def get_leads(
     statut: Optional[str] = Query(None, description="Filtrer par statut ex: nouveau, contacté"),
     search: Optional[str] = Query(None, description="Recherche sur le nom ou l'adresse"),
 ):
+    cache_key = f"leads:{limit}:{offset}:{dept}:{statut}:{search}"
+    cached = _cache.get(cache_key)
+    if cached is not None:
+        return cached
+
     conditions = []
     args = []
 
@@ -263,59 +340,69 @@ async def get_leads(
     sql_count = f"SELECT COUNT(*) AS n FROM landscapers {where}"
 
     try:
-        rows = await query_all(sql, *args)
-        count_row = await query_one(sql_count, *args_count)
+        pool = await _pool_or_error()
+        async with pool.acquire() as conn:
+            rows = await conn.fetch(sql, *args)
+            count_row = await conn.fetchrow(sql_count, *args_count)
         total = count_row["n"] if count_row else 0
+    except HTTPException:
+        raise
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"Erreur DB : {exc}")
 
-    return {
+    result = {
         "total": total,
         "limit": limit,
         "offset": offset,
         "data": [dict(r) for r in rows],
     }
+    _cache.set(cache_key, result)
+    return result
 
 
 # ---------------------------------------------------------------------------
-# Endpoint — Stats globales
+# Endpoint — Stats globales (avec cache 30s)
 # ---------------------------------------------------------------------------
 
 @app.get("/stats", dependencies=[Security(verify_api_key)])
 async def stats():
+    cached = _cache.get("stats")
+    if cached is not None:
+        return cached
+
     today = date.today()
 
     try:
-        row_total = await query_one("SELECT COUNT(*) AS n FROM landscapers")
-        total = row_total["n"] if row_total else 0
-
-        row_today = await query_one(
-            "SELECT COUNT(*) AS n FROM landscapers WHERE scraped_at::date = $1",
-            today,
-        )
-        leads_today = row_today["n"] if row_today else 0
-
-        rows_statut = await query_all(
-            """
-            SELECT
-                COALESCE(statut, 'nouveau') AS statut,
-                COUNT(*) AS n
-            FROM landscapers
-            GROUP BY statut
-            ORDER BY n DESC
-            """
-        )
-        repartition = {r["statut"]: r["n"] for r in rows_statut}
-
+        pool = await _pool_or_error()
+        async with pool.acquire() as conn:
+            row_total = await conn.fetchrow("SELECT COUNT(*) AS n FROM landscapers")
+            row_today = await conn.fetchrow(
+                "SELECT COUNT(*) AS n FROM landscapers WHERE scraped_at::date = $1",
+                today,
+            )
+            rows_statut = await conn.fetch(
+                """
+                SELECT
+                    COALESCE(statut, 'nouveau') AS statut,
+                    COUNT(*) AS n
+                FROM landscapers
+                GROUP BY statut
+                ORDER BY n DESC
+                """
+            )
+    except HTTPException:
+        raise
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"Erreur DB : {exc}")
 
-    return {
-        "total_leads": total,
-        "leads_aujourd_hui": leads_today,
-        "repartition_statut": repartition,
+    result = {
+        "total_leads": row_total["n"] if row_total else 0,
+        "leads_aujourd_hui": row_today["n"] if row_today else 0,
+        "repartition_statut": {r["statut"]: r["n"] for r in rows_statut},
         "date": today.isoformat(),
     }
+    _cache.set("stats", result)
+    return result
 
 
 # ---------------------------------------------------------------------------
@@ -331,7 +418,6 @@ async def logs(
     if not log_file.exists():
         return {"agent": agent, "lines": [], "message": "Aucun log trouvé"}
 
-    # Lecture efficace des N dernières lignes
     buf: deque[str] = deque(maxlen=lines)
     with open(log_file, "r", encoding="utf-8", errors="replace") as f:
         for line in f:
