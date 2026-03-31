@@ -2,7 +2,7 @@
 Nettoyage de la table landscapers — classification en 3 niveaux.
 
 NIVEAU 1 — GARDER : nom contient un mot paysagiste positif → statut = 'nouveau'
-NIVEAU 2 — EXCLURE : nom contient un mot/pattern d'exclusion fort → statut = 'exclu'
+NIVEAU 2 — EXCLURE : nom contient un mot/pattern d'exclusion fort → statut = 'hors_cible'
 NIVEAU 3 — AMBIGU : vérification via code_naf déjà en base
     → code_naf commence par 8130 ou 0161 → garder
     → autre code_naf connu              → exclure
@@ -179,7 +179,7 @@ def contient_un(texte: str, mots: list[str]) -> str | None:
 def classifier_local(name: str) -> tuple[str | None, str]:
     """
     Retourne (decision, raison).
-    decision : 'garder' | 'exclu' | None (ambigu → niveau 3)
+    decision : 'garder' | 'hors_cible' | None (ambigu → niveau 3)
     """
     n = normaliser(name)
 
@@ -216,7 +216,7 @@ def classifier_local(name: str) -> tuple[str | None, str]:
 def classifier_naf(code_naf: str | None) -> tuple[str | None, str]:
     """
     Retourne (decision, raison) selon le code_naf déjà stocké en base.
-    decision : 'garder' | 'exclu' | None (pas de NAF → bénéfice du doute)
+    decision : 'garder' | 'hors_cible' | None (pas de NAF → bénéfice du doute)
     """
     if not code_naf:
         return None, "pas de code NAF en base → bénéfice du doute"
@@ -332,10 +332,10 @@ async def run(dept_filter: str | None, dry_run: bool):
         for i in range(0, len(ids_exclu), 500):
             batch = ids_exclu[i:i + 500]
             await conn.execute(
-                "UPDATE landscapers SET statut = 'exclu' WHERE place_id = ANY($1::text[])",
+                "UPDATE landscapers SET statut = 'hors_cible' WHERE place_id = ANY($1::text[])",
                 batch,
             )
-        print(f"{len(a_exclure)} leads mis à jour → statut='exclu'")
+        print(f"{len(a_exclure)} leads mis à jour → statut='hors_cible'")
     else:
         print("Aucun lead à exclure.")
 
