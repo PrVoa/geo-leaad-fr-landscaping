@@ -80,8 +80,11 @@ MOTS_GARDER_CONDITIONNELS = {
 # ---------------------------------------------------------------------------
 
 # Marques/franchises hors-cible
+# IMPORTANT : vérifiées en PRIORITÉ avant les mots positifs (niveau 1)
 FRANCHISES = [
-    "azae", "domaliance", "maison et services", "apef ",
+    "azae", "domaliance",
+    "maison et services", "maison services",   # couvre "Maison & Services" (& → espace après normalisation)
+    "apef ",
     "axeo services", "free dom", "centre services",
     "home services", "generale des services", "vivaservices",
     "domicile clean", "tout a dom", "bien dans sa maison",
@@ -179,9 +182,20 @@ def contient_un(texte: str, mots: list[str]) -> str | None:
 def classifier_local(name: str) -> tuple[str | None, str]:
     """
     Retourne (decision, raison).
-    decision : 'garder' | 'hors_cible' | None (ambigu → niveau 3)
+    decision : 'garder' | 'exclu' | None (ambigu → niveau 3)
+
+    Ordre de priorité :
+      0. Franchises connues    → exclure IMMÉDIATEMENT (avant tout mot positif)
+      1. Mots positifs         → garder
+      2. Exclusions fermes     → exclure
+      3. Exclusions + contexte → exclure sauf si mot jardin présent
     """
     n = normaliser(name)
+
+    # ── Priorité 0 : franchises connues (écrasent les mots positifs) ──
+    mot = contient_un(n, FRANCHISES)
+    if mot:
+        return "exclu", f"franchise: '{mot}'"
 
     # ── Niveau 1 : mots paysagistes directs ──
     mot = contient_un(n, MOTS_GARDER)
@@ -193,8 +207,9 @@ def classifier_local(name: str) -> tuple[str | None, str]:
         if mot_cond in n and contient_un(n, mots_requis):
             return "garder", f"mot positif conditionnel: '{mot_cond}'"
 
-    # ── Niveau 2 : exclusions fermes (sans condition) ──
-    mot = contient_un(n, EXCLUSION_FERME)
+    # ── Niveau 2 : exclusions fermes sans condition (hors franchises déjà traitées) ──
+    EXCLUSION_FERME_SANS_FRANCHISES = FORMATION + ASSOCIATIONS + INTERIM + TOURISME + ESPAGNOL + DIVERS
+    mot = contient_un(n, EXCLUSION_FERME_SANS_FRANCHISES)
     if mot:
         return "exclu", f"exclusion ferme: '{mot}'"
 
