@@ -3,7 +3,10 @@ Nettoyage de la table landscapers — classification en 3 niveaux.
 
 NIVEAU 1 — GARDER : nom contient un mot paysagiste positif → statut = 'nouveau'
 NIVEAU 2 — EXCLURE : nom contient un mot/pattern d'exclusion fort → statut = 'exclu'
-NIVEAU 3 — AMBIGU : vérification via API gouvernementale (code NAF)
+NIVEAU 3 — AMBIGU : vérification via code_naf déjà en base
+    → code_naf commence par 8130 ou 0161 → garder
+    → autre code_naf connu              → exclure
+    → pas de code_naf                  → laisser 'nouveau' (bénéfice du doute)
 
 Ne supprime jamais — change uniquement le statut.
 Seuls les leads en statut 'nouveau' ou NULL sont traités.
@@ -18,7 +21,6 @@ import asyncio
 import logging
 import re
 import sys
-import time
 import unicodedata
 from pathlib import Path
 
@@ -27,7 +29,6 @@ if sys.platform == "win32":
     sys.stderr.reconfigure(encoding="utf-8", errors="replace")
 
 import asyncpg
-import httpx
 from dotenv import load_dotenv
 import os
 
@@ -145,12 +146,10 @@ EXCLUSION_FERME = FRANCHISES + FORMATION + ASSOCIATIONS + INTERIM + TOURISME + E
 MOTS_SAUVETAGE = ["jardin", "jardins", "paysage", "paysagiste", "elagage", "espace vert"]
 
 # ---------------------------------------------------------------------------
-# Codes NAF acceptés (API niveau 3)
+# Codes NAF (niveau 3 — vérification en base)
 # ---------------------------------------------------------------------------
 
 NAF_GARDER = ("8130", "0161")   # entretien espaces verts, soutien agriculture
-
-API_ENTREPRISES = "https://recherche-entreprises.api.gouv.fr/search"
 
 # ---------------------------------------------------------------------------
 # Normalisation
@@ -204,7 +203,6 @@ def classifier_local(name: str) -> tuple[str | None, str]:
     if mot_excl:
         mot_salut = contient_un(n, MOTS_SAUVETAGE)
         if mot_salut:
-            # Le mot jardin rachète l'exclusion → garder
             return "garder", f"mot positif '{mot_salut}' rachète exclusion '{mot_excl}'"
         return "exclu", f"exclusion conditionnelle: '{mot_excl}'"
 
@@ -212,88 +210,35 @@ def classifier_local(name: str) -> tuple[str | None, str]:
     return None, "ambigu"
 
 # ---------------------------------------------------------------------------
-# NIVEAU 3 — Vérification API gouvernementale
+# NIVEAU 3 — Vérification code NAF en base (sans appel HTTP)
 # ---------------------------------------------------------------------------
 
-async def tester_api(timeout: float = 5.0) -> bool:
-    """Retourne True si l'API gouvernementale est joignable."""
-    try:
-        async with httpx.AsyncClient() as client:
-            r = await client.get(
-                API_ENTREPRISES,
-                params={"q": "test", "limit": 1},
-                timeout=timeout,
-            )
-            return r.status_code < 500
-    except Exception:
-        return False
-
-
-async def verifier_api(client: httpx.AsyncClient, name: str) -> tuple[str, str]:
+def classifier_naf(code_naf: str | None) -> tuple[str | None, str]:
     """
-    Retourne (decision, raison).
-    decision : 'garder' | 'exclu' | 'doute'
+    Retourne (decision, raison) selon le code_naf déjà stocké en base.
+    decision : 'garder' | 'exclu' | None (pas de NAF → bénéfice du doute)
     """
-    try:
-        resp = await client.get(
-            API_ENTREPRISES,
-            params={"q": name, "limit": 1},
-            timeout=8.0,
-        )
-        resp.raise_for_status()
-        data = resp.json()
-    except Exception as exc:
-        return "doute", f"API erreur: {exc}"
+    if not code_naf:
+        return None, "pas de code NAF en base → bénéfice du doute"
 
-    results = data.get("results", [])
-    if not results:
-        return "doute", "API: aucun résultat → bénéfice du doute"
-
-    entreprise = results[0]
-
-    # Vérifier si radiée / fermée
-    etat = (entreprise.get("etat_administratif") or "").upper()
-    if etat == "F":
-        return "exclu", "API: entreprise radiée/fermée"
-
-    # Chercher le code NAF dans les établissements
-    activite_principale = (
-        entreprise.get("activite_principale") or
-        entreprise.get("code_naf") or
-        ""
-    )
-
-    # Parfois dans siege ou matching_etablissements
-    siege = entreprise.get("siege") or {}
-    if not activite_principale:
-        activite_principale = siege.get("activite_principale") or ""
-
-    # Matching établissements
-    matchs = entreprise.get("matching_etablissements") or []
-    if not activite_principale and matchs:
-        activite_principale = matchs[0].get("activite_principale") or ""
-
-    naf = re.sub(r"[^0-9A-Za-z]", "", activite_principale).upper()
+    naf = re.sub(r"[^0-9A-Za-z]", "", code_naf).upper()
 
     if any(naf.startswith(code.replace(".", "")) for code in NAF_GARDER):
-        return "garder", f"API: NAF {naf} → espaces verts/agriculture"
+        return "garder", f"NAF {naf} → espaces verts/agriculture"
 
-    if not naf:
-        return "doute", "API: code NAF absent → bénéfice du doute"
-
-    return "exclu", f"API: NAF {naf} → hors cible"
+    return "exclu", f"NAF {naf} → hors cible"
 
 # ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
 
 async def run(dept_filter: str | None, dry_run: bool):
-    # ── Test de connectivité API au démarrage ──
-    api_disponible = await tester_api(timeout=5.0)
-    if not api_disponible:
-        log.warning("⚠️  API gouvernementale inaccessible - mode mots-clés uniquement (niveaux 1 et 2)")
-
     conn = await asyncpg.connect(_DB_URL)
+
+    # Créer la colonne code_naf si elle n'existe pas encore
+    await conn.execute(
+        "ALTER TABLE landscapers ADD COLUMN IF NOT EXISTS code_naf TEXT"
+    )
 
     where_clauses = ["(statut = 'nouveau' OR statut IS NULL)"]
     if dept_filter:
@@ -301,7 +246,7 @@ async def run(dept_filter: str | None, dry_run: bool):
     where = " AND ".join(where_clauses)
 
     rows = await conn.fetch(
-        f"""SELECT place_id, name, statut
+        f"""SELECT place_id, name, statut, code_naf
             FROM landscapers
             WHERE {where}
             ORDER BY name"""
@@ -313,68 +258,57 @@ async def run(dept_filter: str | None, dry_run: bool):
 
     a_garder:  dict[str, str] = {}   # place_id → raison
     a_exclure: dict[str, str] = {}   # place_id → raison
-    a_doute:   dict[str, str] = {}   # place_id → raison
 
-    # ── Étapes 1 & 2 : classification locale ──
-    ambigus = []
+    nb_naf_garder = 0
+    nb_naf_exclu  = 0
+    nb_naf_doute  = 0
+
     for row in rows:
-        name = row["name"] or ""
+        name    = row["name"] or ""
+        code_naf = row["code_naf"]
+
         decision, raison = classifier_local(name)
+
         if decision == "garder":
             a_garder[row["place_id"]] = raison
-            log.info("GARDER  %-55s  %s", name[:55], raison)
+            log.info("GARDER   %-55s  %s", name[:55], raison)
+
         elif decision == "exclu":
             a_exclure[row["place_id"]] = raison
-            log.info("EXCLU   %-55s  %s", name[:55], raison)
+            log.info("EXCLU    %-55s  %s", name[:55], raison)
+
         else:
-            ambigus.append(dict(row))
+            # ── Niveau 3 : consulter le code_naf en base ──
+            decision_naf, raison_naf = classifier_naf(code_naf)
 
-    if api_disponible:
-        print(f"  Après niveaux 1&2 : {len(a_garder)} gardés / {len(a_exclure)} exclus / {len(ambigus)} ambigus → API")
-    else:
-        print(f"  Après niveaux 1&2 : {len(a_garder)} gardés / {len(a_exclure)} exclus / {len(ambigus)} ambigus laissés 'nouveau' (API indisponible)")
+            if decision_naf == "garder":
+                a_garder[row["place_id"]] = raison_naf
+                nb_naf_garder += 1
+                log.info("NAF→GARDER  %-50s  %s", name[:50], raison_naf)
+            elif decision_naf == "exclu":
+                a_exclure[row["place_id"]] = raison_naf
+                nb_naf_exclu += 1
+                log.info("NAF→EXCLU   %-50s  %s", name[:50], raison_naf)
+            else:
+                # Pas de NAF → bénéfice du doute, reste 'nouveau'
+                nb_naf_doute += 1
+                log.debug("NAF→DOUTE   %-50s  %s", name[:50], raison_naf)
 
-    # ── Étape 3 : vérification API par batch de 100 ──
-    nb_api_garder = 0
-    nb_api_exclu  = 0
-    nb_api_doute  = 0
-
-    if api_disponible:
-        async with httpx.AsyncClient() as client:
-            for i in range(0, len(ambigus), 100):
-                batch = ambigus[i:i + 100]
-                print(f"\n  Batch API {i + 1}–{i + len(batch)} / {len(ambigus)}...")
-                for row in batch:
-                    name = row["name"] or ""
-                    decision, raison = await verifier_api(client, name)
-                    if decision == "garder":
-                        a_garder[row["place_id"]] = raison
-                        nb_api_garder += 1
-                        log.info("API→GARDER  %-50s  %s", name[:50], raison)
-                    elif decision == "exclu":
-                        a_exclure[row["place_id"]] = raison
-                        nb_api_exclu += 1
-                        log.info("API→EXCLU   %-50s  %s", name[:50], raison)
-                    else:
-                        a_doute[row["place_id"]] = raison
-                        nb_api_doute += 1
-                        log.info("API→DOUTE   %-50s  %s", name[:50], raison)
-                    await asyncio.sleep(0.5)
+    nb_local_garder = len(a_garder) - nb_naf_garder
+    nb_local_exclu  = len(a_exclure) - nb_naf_exclu
+    nb_ambigus      = nb_naf_garder + nb_naf_exclu + nb_naf_doute
 
     # ── Résumé ──
     print(f"\n{'─' * 60}")
-    print(f"  Total analysé    : {total}")
-    print(f"  Gardés (nv 1&2)  : {len(a_garder) - nb_api_garder}")
-    print(f"  Exclus (nv 1&2)  : {len(a_exclure) - nb_api_exclu}")
-    if api_disponible:
-        print(f"  Vérifiés API     : {len(ambigus)}")
-        print(f"    └ gardés        : {nb_api_garder}")
-        print(f"    └ exclus        : {nb_api_exclu}")
-        print(f"    └ douteux       : {nb_api_doute}  (laissés 'nouveau')")
-    else:
-        print(f"  Ambigus (nv 3)   : {len(ambigus)}  (API indisponible → laissés 'nouveau')")
-    print(f"  Total gardés     : {len(a_garder) + nb_api_doute + (len(ambigus) if not api_disponible else 0)}")
-    print(f"  Total exclus     : {len(a_exclure)}")
+    print(f"  Total analysé      : {total}")
+    print(f"  Gardés  (nv 1&2)   : {nb_local_garder}")
+    print(f"  Exclus  (nv 1&2)   : {nb_local_exclu}")
+    print(f"  Ambigus (nv 3 NAF) : {nb_ambigus}")
+    print(f"    └ NAF → gardés   : {nb_naf_garder}")
+    print(f"    └ NAF → exclus   : {nb_naf_exclu}")
+    print(f"    └ sans NAF       : {nb_naf_doute}  (laissés 'nouveau')")
+    print(f"  Total gardés       : {len(a_garder) + nb_naf_doute}")
+    print(f"  Total exclus       : {len(a_exclure)}")
     print(f"{'─' * 60}\n")
 
     # Aperçu exclusions
