@@ -2,11 +2,17 @@
 Nettoyage de la table landscapers — classification en 3 niveaux.
 
 NIVEAU 1 — GARDER : nom contient un mot paysagiste positif → statut = 'nouveau'
-NIVEAU 2 — EXCLURE : nom contient un mot/pattern d'exclusion fort → statut = 'hors_cible'
+NIVEAU 2 — EXCLURE : nom contient un mot/pattern d'exclusion fort → statut = 'exclu'
 NIVEAU 3 — AMBIGU : vérification via code_naf déjà en base
     → code_naf commence par 8130 ou 0161 → garder
     → autre code_naf connu              → exclure
     → pas de code_naf                  → laisser 'nouveau' (bénéfice du doute)
+
+ORDRE DE PRIORITÉ dans classifier_local :
+    0. Franchises connues  → exclure (priorité absolue, avant tout mot positif)
+    1. Mots positifs       → garder
+    2. Exclusions fermes   → exclure
+    3. BTP/Nettoyage       → exclure sauf si mot jardin présent
 
 Ne supprime jamais — change uniquement le statut.
 Seuls les leads en statut 'nouveau' ou NULL sont traités.
@@ -55,7 +61,7 @@ log = logging.getLogger("clean_leads")
 
 MOTS_GARDER = [
     "paysage", "paysagiste", "paysagisme",
-    "jardin", "jardins", "jardinier", "jardinage", "jardinage",
+    "jardin", "jardins", "jardinier", "jardinage",
     "espaces verts", "espace vert",
     "elagage", "elagueur",
     "arboriste", "arborist", "arboriculture",
@@ -76,76 +82,195 @@ MOTS_GARDER_CONDITIONNELS = {
 }
 
 # ---------------------------------------------------------------------------
-# NIVEAU 2 — Mots d'exclusion forts (exclure directement)
+# NIVEAU 2 — Mots d'exclusion
+# Tous les mots sont en forme normalisée : lowercase, sans accents, & → espace
 # ---------------------------------------------------------------------------
 
-# Marques/franchises hors-cible
-# IMPORTANT : vérifiées en PRIORITÉ avant les mots positifs (niveau 1)
+# ── Franchises et réseaux de services à domicile ──
+# PRIORITÉ 0 : vérifiées avant tout mot positif (franchises avec "jardinage"
+# dans leur description seraient faussement gardées sinon)
 FRANCHISES = [
     "azae", "domaliance",
-    "maison et services", "maison services",   # couvre "Maison & Services" (& → espace après normalisation)
+    "maison et services", "maison services",  # "Maison & Services" → "maison services"
     "apef ",
-    "axeo services", "free dom", "centre services",
+    "axeo services", "axeo ",
+    "free dom", "centre services",
     "home services", "generale des services", "vivaservices",
     "domicile clean", "tout a dom", "bien dans sa maison",
     "daniel moquet", "idverde", "id verde",
-    "serpe -", "terideal", "o2 jardinage", "o2 jardi",
+    "serpe ", "terideal",
+    "o2 jardinage", "o2 jardi",
+    "age d or services",
+    "groupama",
+    "familles services",         # "Familles & Services"
+    "essentiel domicile",        # "Essentiel & Domicile"
+    "confiez-nous", "confiez nous",
+    "shiva ",
+    "aide a domicile", "aide domicile",
+    "garde d enfants", "garde enfants",
+    "portage de repas",
+    "maintien a domicile",
 ]
 
-# Formation
+# ── Formation et éducation ──
 FORMATION = [
-    "lycee", "cfa ", "cfppa", "mfr ", "ensp",
-    "ecole nationale", "campus", "agrocampus",
+    "lycee", "lycee professionnel",
+    "cfa ", "cfppa", "mfr ", "ensp",
+    "ecole nationale", "campus",
+    "agrocampus", "agrocampus ouest",
+    "btp cfa",
+    "centre de formation",
+    "institut national",
+    "insa ",
+    "naturapolis",
 ]
 
-# Associations / ESAT
+# ── Associations, ESAT, insertion ──
 ASSOCIATIONS = [
-    "esat ", "association solidarite", "association intermediaire",
-    "association internationale", "adapei", "adcr", "ladapt",
+    "esat ",
+    "association solidarite", "association intermediaire",
+    "association internationale", "association emploi",
+    "adapei", "adcr", "ladapt",
+    "passerelles pour l emploi",
+    "association cherbourgeoise",
+    "fo r e t",       # FO.R.E.T après normalisation
+    "association granit",
+    "association eclair",
+    "association saint roch",
+    "graines competences",
 ]
 
-# Nettoyage pur (sans mot jardin — géré dans la logique)
+# ── Intérim et RH ──
+INTERIM = [
+    "interim", " interim",
+    "recrutement",
+    "aquila rh", "temporis ",
+    "r a s interim", "ras interim",
+    "agri-interim", "agri interim",
+    "hope interim",
+    "rm interim",
+    "terra interim",
+    "vert l interim",
+    "manne emploi",
+    "tridentt",
+]
+
+# ── Tourisme et loisirs ──
+TOURISME = [
+    "camping",
+    "office de tourisme",
+    "planetarium",
+    "plage ", "dunes ",
+    "aire de jeux",
+    "cimetiere",
+    "gite ", "gites ",
+    "vacances ",
+    "loisirs chambery",
+    "events et loisirs",
+    "libellule evasions",
+    "voyages de luxe",
+    "balades canons",
+    "yelloh",
+    "parc des bruyeres",
+]
+
+# ── Architecture et décoration d'intérieur ──
+ARCHITECTURE = [
+    "architecte d interieur",
+    "architecture interieur",
+    "decoration interieur",
+    "studio archi",
+    "atelier archi",
+    "urbanisme design",
+    "mc architecture",
+    "bureau d etudes techniques",
+    "ingenierie",
+    "odetec",
+    "caue ",
+    "conseil d architecture",
+]
+
+# ── Espagnol et étranger ──
+ESPAGNOL = [
+    "limpiezas", "arquitectos",
+    "estudio de arquitectura",
+    "servicios y limpiezas",
+    "inmobiliaria",
+    "riells vacacions",
+    "jaam sociedad",
+    "blitzclean services",
+    "ingelan", "arkos", "nexobau",
+    "huw webb",
+]
+
+# ── Divers hors-cible ──
+DIVERS = [
+    "notaire",
+    "piscines de france",
+    "demenagement",
+    "location de nacelles", "location materiel",
+    "fls ",
+    "beton imprime",
+    "valormat", "dispano",
+    "natural stone",
+    "lippi ",
+    "artemat",
+    "ozae materiaux",
+    "garden park concept",
+    "beton pret",
+    "office national des forets", "onf ",
+    "caisse generale", "cgss", "msa ",
+    "aquagaia",
+    "stop taupes",
+    "centrale depannage",
+    "eco nuisibles",
+    "desinsectisation", "deratisation",
+    "destruction nuisibles", "anti nuisibles",
+    "esso turquoise",
+]
+
+# ── Nettoyage professionnel pur ──
 NETTOYAGE = [
     "nettoyage professionnel", "entreprise de nettoyage",
-    "clinitex", "proprete", "vitrerie",
+    "clinitex", "proprete", "vitrerie", "lavage ",
+    "pressing ",
+    "isor ", "propnet", "nikita nettoyage",
+    "foltier nettoyage", "karl nettoyage",
+    "cnet nettoyage",
+    "clean now", "master net",
+    "partenaire service", "edif-propre",
+    "activ clean", "jon net",
+    "maison net", "nhps",
+    "ops ", "phps", "spid anjou",
 ]
 
-# BTP / toiture pur (sans mot jardin — géré dans la logique)
+# ── BTP / toiture pur ──
 BTP = [
-    "couvreur", "toiture", "maconnerie sarl",
-    "renovation construction",
+    "couvreur", "toiture",
+    "maconnerie sarl", "renovation construction",
+    "charpente",
+    "etancheite", "ravalement",
+    "facade ",
+    "platrerie", "carrelage",
+    "peinture sarl", "menuiserie",
+    "electricite", "plomberie",
+    "chauffage sarl", "isolation ",
 ]
 
-# Intérim / RH
-INTERIM = [
-    "interim", "recrutement", "aquila rh", "temporis ",
-    "r.a.s interim", "agri-interim",
-]
+# ---------------------------------------------------------------------------
+# Regroupements pour la logique de classification
+# ---------------------------------------------------------------------------
 
-# Tourisme / loisirs
-TOURISME = [
-    "camping", "office de tourisme", "planetarium",
-    "plage ", "dunes ", "aire de jeux", "cimetiere",
-]
-
-# Espagnol
-ESPAGNOL = [
-    "limpiezas", "arquitectos", "estudio de arquitectura",
-    "servicios y limpiezas",
-]
-
-# Divers
-DIVERS = [
-    "caue ", "notaire", "piscines de france", "demenagement",
-]
-
-# Groupes avec contexte : ces mots excluent SAUF si un mot jardin est présent
+# Excluent SAUF si un mot jardin/paysage est présent dans le nom
 EXCLUSION_SANS_JARDIN = NETTOYAGE + BTP
 
-# Tous les autres excluent sans condition
-EXCLUSION_FERME = FRANCHISES + FORMATION + ASSOCIATIONS + INTERIM + TOURISME + ESPAGNOL + DIVERS
+# Excluent sans condition (hors franchises déjà en priorité 0)
+EXCLUSION_FERME = (
+    FORMATION + ASSOCIATIONS + INTERIM + TOURISME
+    + ARCHITECTURE + ESPAGNOL + DIVERS
+)
 
-# Mots qui "sauvent" un lead des exclusions conditionnelles
+# Mots qui "sauvent" un lead des exclusions conditionnelles (BTP/Nettoyage)
 MOTS_SAUVETAGE = ["jardin", "jardins", "paysage", "paysagiste", "elagage", "espace vert"]
 
 # ---------------------------------------------------------------------------
@@ -183,19 +308,13 @@ def classifier_local(name: str) -> tuple[str | None, str]:
     """
     Retourne (decision, raison).
     decision : 'garder' | 'exclu' | None (ambigu → niveau 3)
-
-    Ordre de priorité :
-      0. Franchises connues    → exclure IMMÉDIATEMENT (avant tout mot positif)
-      1. Mots positifs         → garder
-      2. Exclusions fermes     → exclure
-      3. Exclusions + contexte → exclure sauf si mot jardin présent
     """
     n = normaliser(name)
 
-    # ── Priorité 0 : franchises connues (écrasent les mots positifs) ──
+    # ── Priorité 0 : franchises connues (avant tout mot positif) ──
     mot = contient_un(n, FRANCHISES)
     if mot:
-        return "exclu", f"franchise: '{mot}'"
+        return "exclu", f"franchise: '{mot.strip()}'"
 
     # ── Niveau 1 : mots paysagistes directs ──
     mot = contient_un(n, MOTS_GARDER)
@@ -207,19 +326,18 @@ def classifier_local(name: str) -> tuple[str | None, str]:
         if mot_cond in n and contient_un(n, mots_requis):
             return "garder", f"mot positif conditionnel: '{mot_cond}'"
 
-    # ── Niveau 2 : exclusions fermes sans condition (hors franchises déjà traitées) ──
-    EXCLUSION_FERME_SANS_FRANCHISES = FORMATION + ASSOCIATIONS + INTERIM + TOURISME + ESPAGNOL + DIVERS
-    mot = contient_un(n, EXCLUSION_FERME_SANS_FRANCHISES)
+    # ── Niveau 2 : exclusions fermes sans condition ──
+    mot = contient_un(n, EXCLUSION_FERME)
     if mot:
-        return "exclu", f"exclusion ferme: '{mot}'"
+        return "exclu", f"exclusion ferme: '{mot.strip()}'"
 
     # ── Niveau 2 : exclusions conditionnelles (sauf si mot jardin présent) ──
     mot_excl = contient_un(n, EXCLUSION_SANS_JARDIN)
     if mot_excl:
         mot_salut = contient_un(n, MOTS_SAUVETAGE)
         if mot_salut:
-            return "garder", f"mot positif '{mot_salut}' rachète exclusion '{mot_excl}'"
-        return "exclu", f"exclusion conditionnelle: '{mot_excl}'"
+            return "garder", f"mot positif '{mot_salut}' rachète exclusion '{mot_excl.strip()}'"
+        return "exclu", f"exclusion conditionnelle: '{mot_excl.strip()}'"
 
     # ── Niveau 3 : ambigu ──
     return None, "ambigu"
@@ -231,7 +349,7 @@ def classifier_local(name: str) -> tuple[str | None, str]:
 def classifier_naf(code_naf: str | None) -> tuple[str | None, str]:
     """
     Retourne (decision, raison) selon le code_naf déjà stocké en base.
-    decision : 'garder' | 'hors_cible' | None (pas de NAF → bénéfice du doute)
+    decision : 'garder' | 'exclu' | None (pas de NAF → bénéfice du doute)
     """
     if not code_naf:
         return None, "pas de code NAF en base → bénéfice du doute"
@@ -271,15 +389,15 @@ async def run(dept_filter: str | None, dry_run: bool):
     prefix = "[DRY-RUN] " if dry_run else ""
     print(f"\n{prefix}Analyse de {total} leads...\n")
 
-    a_garder:  dict[str, str] = {}   # place_id → raison
-    a_exclure: dict[str, str] = {}   # place_id → raison
+    a_garder:  dict[str, str] = {}
+    a_exclure: dict[str, str] = {}
 
     nb_naf_garder = 0
     nb_naf_exclu  = 0
     nb_naf_doute  = 0
 
     for row in rows:
-        name    = row["name"] or ""
+        name     = row["name"] or ""
         code_naf = row["code_naf"]
 
         decision, raison = classifier_local(name)
@@ -305,7 +423,6 @@ async def run(dept_filter: str | None, dry_run: bool):
                 nb_naf_exclu += 1
                 log.info("NAF→EXCLU   %-50s  %s", name[:50], raison_naf)
             else:
-                # Pas de NAF → bénéfice du doute, reste 'nouveau'
                 nb_naf_doute += 1
                 log.debug("NAF→DOUTE   %-50s  %s", name[:50], raison_naf)
 
@@ -347,10 +464,10 @@ async def run(dept_filter: str | None, dry_run: bool):
         for i in range(0, len(ids_exclu), 500):
             batch = ids_exclu[i:i + 500]
             await conn.execute(
-                "UPDATE landscapers SET statut = 'hors_cible' WHERE place_id = ANY($1::text[])",
+                "UPDATE landscapers SET statut = 'exclu' WHERE place_id = ANY($1::text[])",
                 batch,
             )
-        print(f"{len(a_exclure)} leads mis à jour → statut='hors_cible'")
+        print(f"{len(a_exclure)} leads mis à jour → statut='exclu'")
     else:
         print("Aucun lead à exclure.")
 
