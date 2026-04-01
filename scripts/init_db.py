@@ -1,12 +1,10 @@
-import asyncio, os, sys
+import asyncio, sys
 from datetime import datetime
-from dotenv import load_dotenv
-load_dotenv()
 from sqlalchemy import Column, DateTime, Float, Integer, String, Text, text
 from sqlalchemy.ext.asyncio import create_async_engine
 from sqlalchemy.orm import DeclarativeBase
 
-DATABASE_URL = os.getenv("DATABASE_URL")
+from config import DATABASE_URL
 
 class Base(DeclarativeBase):
     pass

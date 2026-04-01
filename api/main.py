@@ -9,7 +9,6 @@ Lancement :
   uvicorn api.main:app --host 0.0.0.0 --port 8000
 """
 import asyncio
-import os
 import subprocess
 import sys
 import time
@@ -20,23 +19,18 @@ from pathlib import Path
 from typing import Optional
 
 import asyncpg
-from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException, Security, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security.api_key import APIKeyHeader
 
 # ---------------------------------------------------------------------------
-# Config
+# Config (importée depuis scripts/config.py)
 # ---------------------------------------------------------------------------
 
 ROOT = Path(__file__).resolve().parent.parent
-load_dotenv(ROOT / ".env")
+sys.path.insert(0, str(ROOT / "scripts"))
 
-DATABASE_URL: str = os.getenv("DATABASE_URL", "")
-API_KEY: str = os.getenv("API_KEY", "changeme")
-
-# asyncpg attend postgresql:// et non postgresql+asyncpg://
-_asyncpg_url = DATABASE_URL.replace("postgresql+asyncpg://", "postgresql://")
+from config import DATABASE_URL, API_KEY, DB_URL as _asyncpg_url  # noqa: E402
 
 SCRIPTS_DIR = ROOT / "scripts"
 LOGS_DIR = ROOT / "logs"
@@ -418,16 +412,18 @@ async def stats():
 
 @app.get("/logs", dependencies=[Security(verify_api_key)])
 async def logs(
-    agent: str = Query("scheduler", description="scheduler | clean_leads | enrich_leads"),
+    agent: str = Query("", description="Filtrer par script (scheduler, clean_leads, enrich, …). Vide = tous."),
     lines: int = Query(100, ge=1, le=1000),
 ):
-    log_file = LOGS_DIR / f"{agent}.log"
+    # Tous les logs sont dans app.log depuis l'étape-3
+    log_file = LOGS_DIR / "app.log"
     if not log_file.exists():
-        return {"agent": agent, "lines": [], "message": "Aucun log trouvé"}
+        return {"agent": agent or "all", "lines": [], "message": "Aucun log trouvé"}
 
     buf: deque[str] = deque(maxlen=lines)
     with open(log_file, "r", encoding="utf-8", errors="replace") as f:
         for line in f:
-            buf.append(line.rstrip())
+            if not agent or f"geolaad.{agent}" in line:
+                buf.append(line.rstrip())
 
-    return {"agent": agent, "lines": list(buf)}
+    return {"agent": agent or "all", "lines": list(buf)}

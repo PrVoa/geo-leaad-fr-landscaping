@@ -1,18 +1,43 @@
+"""
+Configuration centrale du projet.
+
+Tous les scripts importent depuis ce module.
+Plus de load_dotenv() ni de os.getenv() éparpillés.
+
+Utilisation :
+    from config import DATABASE_URL, DB_URL, HEADLESS, ...
+    from config import get_logger
+    log = get_logger("mon_script")
+"""
 import os
+import sys
 from pathlib import Path
 from dotenv import load_dotenv
 
 # Charge .env depuis la racine du projet
 load_dotenv(Path(__file__).resolve().parent.parent / ".env")
 
-# --- Validation au démarrage -----------------------------------------------
-DATABASE_URL = os.getenv("DATABASE_URL")
-if not DATABASE_URL:
-    raise EnvironmentError(
-        "DATABASE_URL manquant. Vérifiez votre fichier .env"
-    )
 
-# --- Paramètres configurables via .env -------------------------------------
+# ---------------------------------------------------------------------------
+# Variables requises (erreur claire si manquantes)
+# ---------------------------------------------------------------------------
+
+DATABASE_URL: str = os.getenv("DATABASE_URL", "")
+if not DATABASE_URL:
+    sys.exit("ERREUR CONFIG: DATABASE_URL manquant dans .env")
+
+API_KEY: str = os.getenv("API_KEY", "changeme")
+
+# URL compatible asyncpg (sans +asyncpg://)
+DB_URL: str = DATABASE_URL.replace("postgresql+asyncpg://", "postgresql://").replace(
+    "postgres+asyncpg://", "postgresql://"
+)
+
+
+# ---------------------------------------------------------------------------
+# Paramètres scraping (configurables via .env)
+# ---------------------------------------------------------------------------
+
 HEADLESS         = os.getenv("HEADLESS", "true").lower() == "true"
 MIN_DELAY        = float(os.getenv("MIN_DELAY", "6"))         # pause inter-ville (s)
 MAX_DELAY        = float(os.getenv("MAX_DELAY", "9"))
@@ -21,15 +46,24 @@ MAX_DELAY_FICHE  = float(os.getenv("MAX_DELAY_FICHE", "1.5"))
 OBJECTIF_JOUR    = int(os.getenv("OBJECTIF_JOUR", "50"))
 OBJECTIF_TOTAL   = int(os.getenv("OBJECTIF_TOTAL", "50000"))
 CAPTCHA_WAIT     = int(os.getenv("CAPTCHA_WAIT", "900"))       # 15 min par défaut
+ENRICH_DELAY     = float(os.getenv("ENRICH_DELAY", "1.0"))    # délai API enrichissement
 
-# Modifiables par CLI
+# Modifiable par CLI
 DRY_RUN = False
 
-# --- Logging centralisé (logger.py) ----------------------------------------
-from logger import get_logger
+
+# ---------------------------------------------------------------------------
+# Logging centralisé (re-exporté depuis logger.py)
+# ---------------------------------------------------------------------------
+
+from logger import get_logger  # noqa: E402
 log = get_logger("app")
 
-# --- Données géographiques -------------------------------------------------
+
+# ---------------------------------------------------------------------------
+# Données géographiques
+# ---------------------------------------------------------------------------
+
 VILLES: dict[str, list[str]] = {
     # --- Métropole ---
     "01": ["Bourg-en-Bresse", "Oyonnax", "Ambérieu-en-Bugey"],
@@ -130,7 +164,7 @@ VILLES: dict[str, list[str]] = {
     "95": ["Cergy", "Argenteuil", "Sarcelles"],
 }
 
-MOTS_EXCLUS = [
+MOTS_EXCLUS: list[str] = [
     "velib", "belib", "parking", "station", "borne",
     "metro", "bus", "tram", "supermarche", "carrefour", "leclerc",
 ]
@@ -146,7 +180,7 @@ CATEGORIES_EXCLUES: list[str] = [
     "grande surface", "magasin",
 ]
 
-# Termes de recherche Google Maps (un seul pour rester précis)
+# Termes de recherche Google Maps
 MOTS_CLES_RECHERCHE: list[str] = [
     "paysagiste",
 ]

@@ -16,22 +16,18 @@ Usage :
 """
 import argparse
 import asyncio
-import os
 import random
 import re
 import sys
 import time
 import unicodedata
 from difflib import SequenceMatcher
-from pathlib import Path
-
 if sys.platform == "win32":
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
     sys.stderr.reconfigure(encoding="utf-8", errors="replace")
 
 import asyncpg
 import httpx
-from dotenv import load_dotenv
 from playwright.async_api import async_playwright, TimeoutError as PWTimeoutError
 
 try:
@@ -40,21 +36,8 @@ try:
 except ImportError:
     STEALTH_AVAILABLE = False
 
-load_dotenv(Path(__file__).resolve().parent.parent / ".env")
+from config import DB_URL as _DB_URL, get_logger
 
-DATABASE_URL = os.getenv("DATABASE_URL", "")
-if not DATABASE_URL:
-    sys.exit("DATABASE_URL manquant dans .env")
-
-_DB_URL = DATABASE_URL.replace("postgresql+asyncpg://", "postgresql://").replace(
-    "postgres+asyncpg://", "postgresql://"
-)
-
-# ---------------------------------------------------------------------------
-# Logging
-# ---------------------------------------------------------------------------
-
-from logger import get_logger
 log = get_logger("enrich")
 
 # ---------------------------------------------------------------------------
