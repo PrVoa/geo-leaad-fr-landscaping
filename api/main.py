@@ -133,7 +133,7 @@ class AgentState:
 
 scraper_state = AgentState("scheduler")
 clean_state = AgentState("clean_leads")
-enrich_state = AgentState("enrich_leads")
+enrich_state = AgentState("enrich")
 
 
 # ---------------------------------------------------------------------------
@@ -267,7 +267,7 @@ async def clean_status():
 
 @app.post("/agents/enrich/start", dependencies=[Security(verify_api_key)])
 async def enrich_start():
-    cmd = [PYTHON, str(SCRIPTS_DIR / "enrich_leads.py")]
+    cmd = [PYTHON, str(SCRIPTS_DIR / "enrich.py")]
     enrich_state.start(cmd)
     return {"status": "started", "pid": enrich_state.process.pid}
 
