@@ -1,6 +1,4 @@
 import os
-import logging
-from logging.handlers import RotatingFileHandler
 from pathlib import Path
 from dotenv import load_dotenv
 
@@ -27,39 +25,9 @@ CAPTCHA_WAIT     = int(os.getenv("CAPTCHA_WAIT", "900"))       # 15 min par déf
 # Modifiables par CLI
 DRY_RUN = False
 
-# --- Logging ---------------------------------------------------------------
-LOGS_DIR = Path(__file__).resolve().parent.parent / "logs"
-LOGS_DIR.mkdir(parents=True, exist_ok=True)
-
-
-def setup_logging() -> logging.Logger:
-    logger = logging.getLogger("scheduler")
-    if logger.handlers:
-        return logger  # déjà configuré
-    logger.setLevel(logging.DEBUG)
-    fmt = logging.Formatter(
-        "%(asctime)s [%(levelname)-8s] %(message)s",
-        datefmt="%Y-%m-%d %H:%M:%S",
-    )
-    ch = logging.StreamHandler()
-    ch.setLevel(logging.INFO)
-    ch.setFormatter(fmt)
-
-    fh = RotatingFileHandler(
-        LOGS_DIR / "scheduler.log",
-        maxBytes=5 * 1024 * 1024,
-        backupCount=5,
-        encoding="utf-8",
-    )
-    fh.setLevel(logging.DEBUG)
-    fh.setFormatter(fmt)
-
-    logger.addHandler(ch)
-    logger.addHandler(fh)
-    return logger
-
-
-log = setup_logging()
+# --- Logging centralisé (logger.py) ----------------------------------------
+from logger import get_logger
+log = get_logger("app")
 
 # --- Données géographiques -------------------------------------------------
 VILLES: dict[str, list[str]] = {

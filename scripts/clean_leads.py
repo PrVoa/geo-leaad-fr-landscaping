@@ -24,7 +24,6 @@ Usage :
 """
 import argparse
 import asyncio
-import logging
 import re
 import sys
 import unicodedata
@@ -48,12 +47,8 @@ _DB_URL = DATABASE_URL.replace("postgresql+asyncpg://", "postgresql://").replace
     "postgres+asyncpg://", "postgresql://"
 )
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s  %(levelname)-8s  %(message)s",
-    datefmt="%H:%M:%S",
-)
-log = logging.getLogger("clean_leads")
+from logger import get_logger
+log = get_logger("clean_leads")
 
 # ---------------------------------------------------------------------------
 # NIVEAU 1 — Mots paysagistes positifs (garder directement)

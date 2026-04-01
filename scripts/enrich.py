@@ -16,7 +16,6 @@ Usage :
 """
 import argparse
 import asyncio
-import logging
 import os
 import random
 import re
@@ -55,19 +54,8 @@ _DB_URL = DATABASE_URL.replace("postgresql+asyncpg://", "postgresql://").replace
 # Logging
 # ---------------------------------------------------------------------------
 
-LOG_FILE = Path(__file__).resolve().parent.parent / "logs" / "enrich.log"
-LOG_FILE.parent.mkdir(exist_ok=True)
-
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s  %(levelname)-8s  %(message)s",
-    datefmt="%H:%M:%S",
-    handlers=[
-        logging.FileHandler(LOG_FILE, encoding="utf-8"),
-        logging.StreamHandler(sys.stdout),
-    ],
-)
-log = logging.getLogger("enrich")
+from logger import get_logger
+log = get_logger("enrich")
 
 # ---------------------------------------------------------------------------
 # Constantes
