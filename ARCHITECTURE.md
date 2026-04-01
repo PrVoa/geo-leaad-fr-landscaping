@@ -49,7 +49,7 @@ VPS Ubuntu 22.04 — 178.104.104.36
 | 22 | SSH |
 | 80 | HTTP (redirect HTTPS) |
 | 443 | HTTPS (nginx) |
-| 8000 | FastAPI (localhost uniquement) |
+| 8000 | FastAPI (**localhost uniquement** — plus exposé externalement) |
 
 ---
 
@@ -70,16 +70,16 @@ VPS Ubuntu 22.04 — 178.104.104.36
 
 | Fichier | Rôle |
 |---|---|
-| `config.py` | Chargement `.env`, constantes globales |
+| `config.py` | **Config centrale** : tous les `os.getenv()`, validation au démarrage, re-exporte `get_logger` |
+| `logger.py` | **Logs centralisés** : `get_logger(name)`, fichier unique `logs/app.log` (10 MB × 5) |
 | `models.py` | Modèle SQLAlchemy `Landscaper` (table `landscapers`) |
 | `init_db.py` | Création des tables — **lancer une seule fois** |
 | `test_connection.py` | Test de connexion PostgreSQL |
-| `scheduler.py` | **Agent principal** : grille 0.3°×0.3°, 50 leads/jour automatique |
-| `scrapers.py` | Fonctions Playwright partagées (extraction fiches, détection blocage) |
-| `scraper_fiche.py` | Extraction détaillée d'une fiche Google Maps |
-| `clean_leads.py` | Nettoyage des doublons et données manquantes |
-| `enrich_leads.py` | Enrichissement : gérant, SIRET, forme juridique (API Entreprise) |
-| `debug_maps.py` | Outil de débogage Playwright |
+| `scheduler.py` | **Agent principal** : grille 0.3°×0.3°, scraping Google Maps |
+| `scraper_core.py` | **Helpers Playwright partagés** : extraction fiches, email, rating, scroll, CAPTCHA |
+| `clean_leads.py` | Classification 3 niveaux des leads (positif / hors-cible / NAF) |
+| `enrich.py` | **Enrichissement unifié** : societe.com (Playwright) → API gouvernementale (fallback) |
+| `debug_maps.py` | Outil de débogage Playwright (usage ponctuel) |
 | `grid_tasks.json` | **État de progression** du scraping (auto-généré, modifié en continu) |
 
 ### `api/` — API FastAPI
@@ -101,11 +101,8 @@ VPS Ubuntu 22.04 — 178.104.104.36
 
 | Fichier | Rôle |
 |---|---|
-| `scheduler.log` | Logs du scraper principal (~5 Mo) |
-| `scheduler_nohup.log` | Sortie nohup du scraper (~600 Ko) |
+| `app.log` | **Log unique** de tous les scripts (rotation 10 MB × 5) |
 | `git_sync.log` | Logs du script de sync GitHub |
-| `clean_leads.log` | Logs nettoyage doublons |
-| `enrich_leads.log` | Logs enrichissement SIRET |
 
 ---
 
@@ -205,7 +202,7 @@ curl -H "X-Api-Key: VOTRE_CLE" https://178-104-104-36.sslip.io/stats
 # Nettoyage / enrichissement
 source .venv/bin/activate
 python scripts/clean_leads.py
-python scripts/enrich_leads.py
+python scripts/enrich.py
 ```
 
 ---
