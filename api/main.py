@@ -298,7 +298,7 @@ async def get_leads(
     offset: int = Query(0, ge=0, description="Décalage pour la pagination"),
     dept: Optional[str] = Query(None, description="Filtrer par département ex: 69"),
     statut: Optional[str] = Query(None, description="Filtrer par statut ex: nouveau, contacté"),
-    search: Optional[str] = Query(None, description="Recherche sur le nom ou l'adresse"),
+    search: Optional[str] = Query(None, description="Recherche dans nom, adresse, téléphone, email, notes, assigné"),
 ):
     cache_key = f"leads:{limit}:{offset}:{dept}:{statut}:{search}"
     cached = _cache.get(cache_key)
@@ -318,7 +318,14 @@ async def get_leads(
 
     if search:
         args.append(f"%{search}%")
-        conditions.append(f"(name ILIKE ${len(args)} OR address ILIKE ${len(args)})")
+        conditions.append(
+            f"(name ILIKE ${len(args)}"
+            f" OR address ILIKE ${len(args)}"
+            f" OR phone ILIKE ${len(args)}"
+            f" OR email ILIKE ${len(args)}"
+            f" OR notes ILIKE ${len(args)}"
+            f" OR assigne_a ILIKE ${len(args)})"
+        )
 
     where = f"WHERE {' AND '.join(conditions)}" if conditions else ""
 

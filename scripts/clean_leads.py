@@ -2,7 +2,7 @@
 Nettoyage de la table landscapers — classification en 3 niveaux.
 
 NIVEAU 1 — GARDER : nom contient un mot paysagiste positif → statut = 'nouveau'
-NIVEAU 2 — EXCLURE : nom contient un mot/pattern d'exclusion fort → statut = 'exclu'
+NIVEAU 2 — EXCLURE : nom contient un mot/pattern d'exclusion fort → statut = 'hors_cible'
 NIVEAU 3 — AMBIGU : vérification via code_naf déjà en base
     → code_naf commence par 8130 ou 0161 → garder
     → autre code_naf connu              → exclure
@@ -464,10 +464,10 @@ async def run(dept_filter: str | None, dry_run: bool):
         for i in range(0, len(ids_exclu), 500):
             batch = ids_exclu[i:i + 500]
             await conn.execute(
-                "UPDATE landscapers SET statut = 'exclu' WHERE place_id = ANY($1::text[])",
+                "UPDATE landscapers SET statut = 'hors_cible' WHERE place_id = ANY($1::text[])",
                 batch,
             )
-        print(f"{len(a_exclure)} leads mis à jour → statut='exclu'")
+        print(f"{len(a_exclure)} leads mis à jour → statut='hors_cible'")
     else:
         print("Aucun lead à exclure.")
 

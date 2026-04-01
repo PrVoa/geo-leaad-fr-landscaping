@@ -1,5 +1,6 @@
 """
-Fonctions de scraping Google Maps (utilisées par scheduler.py).
+Helpers Playwright partagés pour le scraping Google Maps.
+Utilisé par scheduler.py (et tout futur script de scraping).
 """
 import asyncio
 import re

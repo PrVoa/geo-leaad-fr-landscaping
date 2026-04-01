@@ -25,7 +25,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import config
 from config import log, DATABASE_URL, CAPTCHA_WAIT, HEADLESS
 from models import Landscaper
-from scrapers import (
+from scraper_core import (
     BlocageDetecte,
     accepter_cookies,
     detecter_blocage,
