@@ -104,5 +104,23 @@ while true; do
     log "— Pas de changement dans l'API, aucun redémarrage nécessaire"
   fi
 
+  # 8. Synchroniser openclaw/ → /opt/openclaw/ si des fichiers ont changé
+  OPENCLAW_UPDATED=false
+  while IFS= read -r file; do
+    if [[ "$file" == openclaw/* ]]; then
+      OPENCLAW_UPDATED=true
+      break
+    fi
+  done <<< "$CHANGED_FILES"
+
+  if [ "$OPENCLAW_UPDATED" = true ]; then
+    log "→ Mise à jour de /opt/openclaw/ depuis openclaw/…"
+    rsync -a --exclude='.env' --exclude='venv/' --exclude='memory/' \
+      --exclude='logs/' --exclude='docs/' --exclude='__pycache__/' \
+      "$ROOT/openclaw/" /opt/openclaw/
+    log "✓ /opt/openclaw/ synchronisé"
+    log "⚠️  openclaw mis à jour — redémarrer manuellement : systemctl restart openclaw"
+  fi
+
   sleep "$INTERVAL"
 done
