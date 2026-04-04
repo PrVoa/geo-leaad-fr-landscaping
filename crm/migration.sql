@@ -88,3 +88,27 @@ ALTER TABLE landscapers
 -- Index pour filtrer par score et type dans le CRM
 CREATE INDEX IF NOT EXISTS idx_landscapers_score_icp     ON landscapers(score_icp);
 CREATE INDEX IF NOT EXISTS idx_landscapers_type_activite ON landscapers(type_activite);
+
+-- ============================================================
+-- Migration Statuts CRM — contrainte CHECK à jour
+-- ============================================================
+
+-- Normaliser les anciens statuts avant d'appliquer la contrainte
+UPDATE landscapers SET statut = 'a_ferme'         WHERE statut = 'exclu';
+UPDATE landscapers SET statut = 'hors_cible'      WHERE statut IN ('ferme','trop_tot','pas_encore_approche');
+UPDATE landscapers SET statut = 'contacte'        WHERE statut IN ('a_contacter','premier_message');
+UPDATE landscapers SET statut = 'en_discussion'   WHERE statut IN ('demo_planifiee','demo_faite');
+UPDATE landscapers SET statut = 'solution_envoyee' WHERE statut = 'offre_envoyee';
+UPDATE landscapers SET statut = 'relance_essai'   WHERE statut = 'relance';
+UPDATE landscapers SET statut = 'nouveau'         WHERE statut IS NULL OR statut NOT IN (
+  'nouveau','contacte','en_discussion','solution_envoyee','relance_essai',
+  'accompagne','gagne','perdu','pas_interesse','sans_suite','hors_cible','a_ferme'
+);
+
+-- Supprimer l'ancienne contrainte puis recréer avec les statuts actuels
+ALTER TABLE landscapers DROP CONSTRAINT IF EXISTS landscapers_statut_check;
+ALTER TABLE landscapers ADD CONSTRAINT landscapers_statut_check CHECK (statut IN (
+  'nouveau',
+  'contacte', 'en_discussion', 'solution_envoyee', 'relance_essai', 'accompagne', 'gagne',
+  'perdu', 'pas_interesse', 'sans_suite', 'hors_cible', 'a_ferme'
+));

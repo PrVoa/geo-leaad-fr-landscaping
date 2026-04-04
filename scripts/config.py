@@ -28,6 +28,8 @@ if not DATABASE_URL:
 
 API_KEY: str = os.getenv("API_KEY", "changeme")
 
+ANTHROPIC_API_KEY: str = os.getenv("ANTHROPIC_API_KEY", "")
+
 # URL compatible asyncpg (sans +asyncpg://)
 DB_URL: str = DATABASE_URL.replace("postgresql+asyncpg://", "postgresql://").replace(
     "postgres+asyncpg://", "postgresql://"

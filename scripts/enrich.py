@@ -481,9 +481,9 @@ async def enrichir_lead(
 # ---------------------------------------------------------------------------
 
 async def afficher_stats(conn):
-    total    = await conn.fetchval("SELECT COUNT(*) FROM landscapers WHERE statut != 'exclu'")
+    total    = await conn.fetchval("SELECT COUNT(*) FROM landscapers WHERE statut != 'a_ferme'")
     enrichis = await conn.fetchval(
-        "SELECT COUNT(*) FROM landscapers WHERE nom_gerant IS NOT NULL AND statut != 'exclu'"
+        "SELECT COUNT(*) FROM landscapers WHERE nom_gerant IS NOT NULL AND statut != 'a_ferme'"
     )
     manquants = total - enrichis
     pct = round(enrichis / total * 100) if total else 0
@@ -525,7 +525,7 @@ async def run(dept_filter: str | None, limit: int | None, dry_run: bool, delay: 
         log.warning("API gouvernementale inaccessible — fallback désactivé")
 
     # Leads à enrichir (nom_gerant IS NULL)
-    where = "nom_gerant IS NULL AND name IS NOT NULL AND (statut IS NULL OR statut != 'exclu')"
+    where = "nom_gerant IS NULL AND name IS NOT NULL AND (statut IS NULL OR statut != 'a_ferme')"
     if dept_filter:
         where += f" AND dept = '{dept_filter}'"
 
@@ -598,7 +598,7 @@ async def run(dept_filter: str | None, limit: int | None, dry_run: bool, delay: 
                                     siret           = $3,
                                     forme_juridique = $4,
                                     code_naf        = $5,
-                                    statut          = 'exclu'
+                                    statut          = 'a_ferme'
                                 WHERE place_id = $6""",
                                 result.get("prenom_gerant"),
                                 result.get("nom_gerant"),
@@ -608,7 +608,7 @@ async def run(dept_filter: str | None, limit: int | None, dry_run: bool, delay: 
                                 pid,
                             )
                             exclus += 1
-                            log.info("RADIÉ→EXCLU  %s", nom[:60])
+                            log.info("RADIÉ→A_FERME  %s", nom[:60])
                         else:
                             await conn.execute(
                                 """UPDATE landscapers SET

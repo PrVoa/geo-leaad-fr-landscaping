@@ -371,8 +371,10 @@
   <button class="bulk-btn" data-statut="accompagne">Accompagné</button>
   <button class="bulk-btn" data-statut="gagne">Gagné</button>
   <button class="bulk-btn" data-statut="perdu">Perdu</button>
+  <button class="bulk-btn" data-statut="pas_interesse">Pas intéressé</button>
   <button class="bulk-btn" data-statut="sans_suite">Sans suite</button>
   <button class="bulk-btn" data-statut="hors_cible">Hors cible</button>
+  <button class="bulk-btn" data-statut="a_ferme">A fermé</button>
   <button id="bulk-cancel">✕ Annuler</button>
 </div>
 
@@ -663,9 +665,21 @@ function onBadgeClick(e) {
   });
 
   const rect = badge.getBoundingClientRect();
-  dropdown.style.top  = (rect.bottom + 4) + 'px';
+  dropdown.style.visibility = 'hidden';
   dropdown.style.left = rect.left + 'px';
+  dropdown.style.top  = (rect.bottom + 4) + 'px';
   document.body.appendChild(dropdown);
+
+  // Repositionner si le dropdown sort de l'écran
+  const ddH = dropdown.offsetHeight;
+  const ddW = dropdown.offsetWidth;
+  if (rect.bottom + 4 + ddH > window.innerHeight) {
+    dropdown.style.top = Math.max(4, rect.top - ddH - 4) + 'px';
+  }
+  if (rect.left + ddW > window.innerWidth) {
+    dropdown.style.left = Math.max(4, window.innerWidth - ddW - 8) + 'px';
+  }
+  dropdown.style.visibility = '';
 
   // Fermer au clic extérieur
   setTimeout(() => {
