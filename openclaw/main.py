@@ -11,6 +11,7 @@ from autonomous_loop import (
     cmd_autonome,
     cmd_decisions,
     cmd_plan,
+    _record_stage_started,
 )
 
 load_dotenv("/opt/openclaw/.env")
@@ -223,12 +224,13 @@ def get_ram_free_pct() -> float | None:
 
 # ─── RAG ──────────────────────────────────────────────────────────────────────
 
-def load_kb() -> dict | None:
+def load_kb() -> list | None:
     if not KB_FILE.exists():
         return None
     try:
         with open(KB_FILE, encoding="utf-8") as f:
-            return json.load(f)
+            kb = json.load(f)
+        return kb if isinstance(kb, list) else None
     except Exception:
         return None
 
@@ -239,16 +241,14 @@ def search_kb(query: str, top_k: int = 3) -> list[str]:
     words = set(re.findall(r'\b\w{3,}\b', query.lower()))
     if not words:
         return []
-    index: dict[str, list[str]] = kb.get("index", {})
-    chunks_by_id: dict[str, dict] = {c["id"]: c for c in kb.get("chunks", [])}
-    scores: dict[str, int] = {}
-    for word in words:
-        for chunk_id in index.get(word, []):
-            scores[chunk_id] = scores.get(chunk_id, 0) + 1
-    if not scores:
-        return []
-    top_ids = sorted(scores, key=lambda x: scores[x], reverse=True)[:top_k]
-    return [chunks_by_id[cid]["content"] for cid in top_ids if cid in chunks_by_id]
+    scores: dict[int, int] = {}
+    for i, chunk in enumerate(kb):
+        chunk_words = set(re.findall(r'\b\w{3,}\b', chunk["content"].lower()))
+        score = len(words & chunk_words)
+        if score > 0:
+            scores[i] = score
+    top_indices = sorted(scores, key=lambda x: scores[x], reverse=True)[:top_k]
+    return [kb[i]["content"] for i in top_indices]
 
 
 # ─── SYSTEM PROMPT ENRICHI ────────────────────────────────────────────────────
@@ -536,14 +536,21 @@ async def check_proactive_alerts(stats: dict):
 
     if scraper_running:
         alert["last_scraper_active"] = now.isoformat()
-    elif scraper_silent_h > 48 and last_scraper and should_alert("scraper_inactive_48h", hours=24):
-        problems.append(
-            f"🕷️ *Scraper inactif depuis {int(scraper_silent_h)}h.*\n"
-            f"Lance-le avec /start_scraper si nécessaire."
-        )
-        alert["scraper_inactive_48h"] = now.isoformat()
-    elif scraper_running:
         alert.pop("scraper_inactive_48h", None)
+    else:
+        # Ne pas alerter si le scraper a terminé normalement (exit code 0)
+        scraper_exit_code = alert.get("last_scraper_exit_code")
+        scraper_finished  = alert.get("last_scraper_finished")
+        scraper_ended_ok  = (scraper_finished is not None and scraper_exit_code == 0)
+
+        if not scraper_ended_ok and scraper_silent_h > 48 and last_scraper and should_alert("scraper_inactive_48h", hours=24):
+            problems.append(
+                f"🕷️ *Scraper inactif depuis {int(scraper_silent_h)}h.*\n"
+                f"Lance-le avec /start_scraper si nécessaire."
+            )
+            alert["scraper_inactive_48h"] = now.isoformat()
+        elif scraper_ended_ok:
+            alert.pop("scraper_inactive_48h", None)
 
     # Trajectoire hebdo : si peu d'entrées journal en milieu de semaine
     weekday = paris.weekday()  # 0=lundi, 6=dimanche
@@ -642,7 +649,7 @@ async def morning_brief():
         await check_proactive_alerts(stats)
 
     msg = (
-        f"🌅 *Bonjour ! Brief VAO du {today_str}*\n\n"
+        f"🌅 *Bonjour Quentin ! Brief VAO du {today_str}*\n\n"
         f"*Agents :*\n" + "\n".join(agent_lines) + "\n\n"
         f"📊 {stats_line}\n\n"
         f"*Rappels du jour :*\n{rappels_text}\n\n"
@@ -654,7 +661,7 @@ async def morning_brief():
 async def daily_checkin():
     for cid in CHAT_IDS:
         awaiting_journal.add(cid)
-        await send(cid, "Bonsoir ! Qu'est-ce que t'as fait aujourd'hui sur VAO ?")
+        await send(cid, "Bonsoir Quentin ! Qu'est-ce que t'as fait aujourd'hui sur VAO ?")
 
 
 async def weekly_summary():
@@ -803,7 +810,7 @@ async def cmd_start_scraper(update: Update, context: ContextTypes.DEFAULT_TYPE):
             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
         )
         running_procs["scraper"] = proc
-        # Mise à jour timestamp scraper dans alert_state
+        _record_stage_started("scraper")
         alert = load_json(ALERT_FILE, {})
         alert["last_scraper_active"] = now_utc().isoformat()
         save_json(ALERT_FILE, alert)
@@ -835,6 +842,7 @@ async def cmd_start_enrich(update: Update, context: ContextTypes.DEFAULT_TYPE):
             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
         )
         running_procs["enrich"] = proc
+        _record_stage_started("enrich")
         await safe_reply(update, f"✅ Enrichissement lancé (PID {proc.pid})", markdown=False)
     except Exception as e:
         await safe_reply(update, f"❌ {e}", markdown=False)
@@ -895,6 +903,107 @@ async def cmd_brief(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await morning_brief()
 
 
+# ─── INGESTION DOCUMENT TELEGRAM ──────────────────────────────────────────────
+
+def _extract_text_pdf(path: Path) -> str:
+    import pdfplumber
+    parts = []
+    with pdfplumber.open(path) as pdf:
+        for page in pdf.pages:
+            t = page.extract_text()
+            if t:
+                parts.append(t)
+    return "\n".join(parts)
+
+def _make_chunks(text: str, source: str, chunk_size: int = 500, overlap: int = 50) -> list[dict]:
+    words = text.split()
+    chunks, start, idx = [], 0, 0
+    while start < len(words):
+        end   = start + chunk_size
+        chunk = " ".join(words[start:end])
+        chunks.append({
+            "id":      f"{source}_{idx}",
+            "source":  source,
+            "content": chunk,
+            "words":   min(chunk_size, len(words) - start),
+        })
+        idx   += 1
+        start  = end - overlap
+    return chunks
+
+def _ingest_pdf(pdf_path: Path) -> tuple[int, bool]:
+    """
+    Ingère un PDF dans la KB. Retourne (nb_chunks_ajoutés, déjà_connu).
+    """
+    source = pdf_path.stem
+    kb = load_kb() or []
+    existing_sources = {c["source"] for c in kb}
+
+    if source in existing_sources:
+        return 0, True
+
+    text = _extract_text_pdf(pdf_path)
+    if not text.strip():
+        return 0, False
+
+    new_chunks = _make_chunks(text, source)
+    kb.extend(new_chunks)
+
+    KB_FILE.parent.mkdir(parents=True, exist_ok=True)
+    with open(KB_FILE, "w", encoding="utf-8") as f:
+        json.dump(kb, f, indent=2, ensure_ascii=False)
+
+    return len(new_chunks), False
+
+
+async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not authorized(update): return
+
+    doc = update.message.document
+    if not doc.mime_type or doc.mime_type != "application/pdf":
+        await safe_reply(update, "⚠️ Seuls les PDFs sont supportés pour l'instant.", markdown=False)
+        return
+
+    # Nom de fichier sécurisé
+    raw_name = doc.file_name or f"doc_{doc.file_id}.pdf"
+    safe_name = re.sub(r'[^\w\s\-.]', '_', raw_name).strip()
+    if not safe_name.lower().endswith(".pdf"):
+        safe_name += ".pdf"
+
+    dest = Path("/opt/openclaw/docs") / safe_name
+    dest.parent.mkdir(parents=True, exist_ok=True)
+
+    await safe_reply(update, f"📥 Réception de *{esc(raw_name)}*…")
+
+    try:
+        tg_file = await context.bot.get_file(doc.file_id)
+        await tg_file.download_to_drive(str(dest))
+    except Exception as e:
+        await safe_reply(update, f"❌ Erreur téléchargement : {e}", markdown=False)
+        return
+
+    try:
+        added, already_known = _ingest_pdf(dest)
+    except Exception as e:
+        await safe_reply(update, f"❌ Erreur ingestion : {e}", markdown=False)
+        return
+
+    if already_known:
+        await safe_reply(update, f"ℹ️ *{esc(raw_name)}* est déjà dans la knowledge base.")
+        return
+
+    if added == 0:
+        await safe_reply(update, f"⚠️ PDF reçu mais aucun texte extrait (*{esc(raw_name)}*).", markdown=False)
+        return
+
+    kb_total = len(load_kb() or [])
+    await safe_reply(
+        update,
+        f"✅ *{esc(raw_name)}* ingéré — *{added} chunks* ajoutés\n"
+        f"Knowledge base : {kb_total} chunks au total"
+    )
+
+
 async def cmd_memoire(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not authorized(update): return
     lt       = load_long_term()
@@ -950,9 +1059,10 @@ async def cmd_memoire(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # KB
     if kb:
-        parts.append(f"*Knowledge base :* {kb.get('total',0)} chunks — {len(kb.get('sources',[]))} PDF(s)")
-        if kb.get("sources"):
-            parts.append("  Sources : " + ", ".join(kb["sources"][:5]))
+        sources = list({c["source"] for c in kb})
+        parts.append(f"*Knowledge base :* {len(kb)} chunks — {len(sources)} PDF(s)")
+        if sources:
+            parts.append("  Sources : " + ", ".join(sorted(sources)[:5]))
     else:
         parts.append("*Knowledge base :* vide (lance /ingest pour charger les PDFs)")
 
@@ -1065,7 +1175,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 def auto_ingest_if_empty():
     """Lance l'ingestion des PDFs si la knowledge base est vide."""
     kb = load_kb()
-    if kb and kb.get("total", 0) > 0:
+    if kb and len(kb) > 0:
         return
     docs = list((BASE / "docs").rglob("*.pdf"))
     if not docs:
@@ -1119,6 +1229,7 @@ async def main():
     app.add_handler(CommandHandler("autonome",       cmd_autonome))
     app.add_handler(CommandHandler("decisions",      cmd_decisions))
     app.add_handler(CommandHandler("plan",           cmd_plan))
+    app.add_handler(MessageHandler(filters.Document.PDF, handle_document))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
     await app.initialize()

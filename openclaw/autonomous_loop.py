@@ -40,6 +40,13 @@ CLEAN_CMD = [
     "/opt/geo-leaad-fr-landscaping/scripts/clean.py",
 ]
 
+# Pipeline scraper → enrich → clean
+PIPELINE_STAGES = [
+    ("scraper", SCRAPER_CMD),
+    ("enrich",  ENRICH_CMD),
+    ("clean",   CLEAN_CMD),
+]
+
 MAX_ACTIONS_PER_DAY = 3
 
 
@@ -85,6 +92,109 @@ def set_autonomous_mode(active: bool):
         "active": active,
         "changed_at": _now_utc().isoformat(),
     })
+
+
+# ─── PIPELINE MANAGER ────────────────────────────────────────────────────────
+
+def _record_stage_started(stage: str):
+    """Marque qu'un stage a démarré (réinitialise la fin précédente)."""
+    alert = _load_json(ALERT_FILE, {})
+    alert[f"last_{stage}_started"]   = _now_utc().isoformat()
+    alert.pop(f"last_{stage}_finished",  None)
+    alert.pop(f"last_{stage}_exit_code", None)
+    _save_json(ALERT_FILE, alert)
+
+def _record_stage_finished(stage: str, exit_code: int):
+    """Marque qu'un stage s'est terminé avec un code de sortie."""
+    alert = _load_json(ALERT_FILE, {})
+    if not alert.get(f"last_{stage}_finished"):  # ne pas écraser si déjà noté
+        alert[f"last_{stage}_finished"]  = _now_utc().isoformat()
+        alert[f"last_{stage}_exit_code"] = exit_code
+        _save_json(ALERT_FILE, alert)
+
+def _pipeline_next_needed(from_stage: str, to_stage: str) -> bool:
+    """
+    True si to_stage doit être lancé après la fin de from_stage.
+    Critères : from_stage terminé OK + (to_stage jamais lancé OU lancé avant from_stage).
+    """
+    alert = _load_json(ALERT_FILE, {})
+    from_finished = alert.get(f"last_{from_stage}_finished")
+    from_exit     = alert.get(f"last_{from_stage}_exit_code")
+    to_started    = alert.get(f"last_{to_stage}_started")
+
+    if from_exit != 0 or not from_finished:
+        return False
+    if not to_started:
+        return True
+    return to_started < from_finished  # to_stage a démarré avant la fin de from_stage
+
+async def pipeline_advance(running_procs: dict) -> bool:
+    """
+    Vérifie si un stage du pipeline vient de terminer et lance le suivant.
+    Appelé à chaque tick avant analyze_and_decide.
+    Retourne True si une action a été prise.
+    """
+    for i, (stage, _) in enumerate(PIPELINE_STAGES[:-1]):
+        proc = running_procs.get(stage)
+        if proc is None or proc.poll() is None:
+            continue  # pas lancé ou encore en cours
+
+        exit_code  = proc.returncode
+        _record_stage_finished(stage, exit_code)
+
+        if exit_code != 0:
+            # Crash — alerte et on n'avance pas
+            alert = _load_json(ALERT_FILE, {})
+            crash_key = f"{stage}_crash_alerted"
+            if not alert.get(crash_key):
+                alert[crash_key] = _now_utc().isoformat()
+                _save_json(ALERT_FILE, alert)
+                await _broadcast(
+                    f"❌ *Pipeline — {stage.upper()} a crashé*\n"
+                    f"Code de sortie : `{exit_code}`\n"
+                    f"Quentin, vérifiez les logs avec /logs."
+                )
+            continue
+
+        next_stage, next_cmd = PIPELINE_STAGES[i + 1]
+
+        if not _pipeline_next_needed(stage, next_stage):
+            continue  # déjà avancé
+
+        next_proc = running_procs.get(next_stage)
+        if next_proc and next_proc.poll() is None:
+            continue  # déjà en cours
+
+        if count_actions_today() >= MAX_ACTIONS_PER_DAY:
+            await _broadcast(
+                f"⚠️ *Pipeline en attente* — quota journalier atteint.\n"
+                f"Prochaine étape : *{next_stage.upper()}* (sera lancée demain)."
+            )
+            return False
+
+        try:
+            proc_next = subprocess.Popen(next_cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            running_procs[next_stage] = proc_next
+            _record_stage_started(next_stage)
+
+            result = f"{next_stage} lancé (PID {proc_next.pid})"
+            await _broadcast(
+                f"🤖 *Pipeline → {next_stage.upper()}*\n"
+                f"_{stage.upper()} terminé normalement — étape suivante démarrée automatiquement_\n\n"
+                f"✅ {result}"
+            )
+            append_autonomous_log({
+                "date":       _now_utc().isoformat(),
+                "action":     next_stage.upper(),
+                "reason":     f"Pipeline automatique : {stage} terminé (exit 0)",
+                "confidence": "high",
+                "result":     result,
+            })
+            return True
+        except Exception as e:
+            await _broadcast(f"❌ Erreur pipeline {next_stage} : {e}")
+
+    return False
 
 
 # ─── LOG AUTONOME ─────────────────────────────────────────────────────────────
@@ -207,8 +317,28 @@ def _build_context(any_agent_running: bool = False) -> str:
             f"(conf={a.get('confidence','?')}) — {a.get('reason','')[:80]} → {a.get('result','')[:40]}"
         )
 
+    # État pipeline détaillé
+    def _stage_status(stage: str) -> str:
+        proc_running = any_agent_running  # simplifié — raffiné ci-dessous
+        a = _load_json(ALERT_FILE, {})
+        finished  = a.get(f"last_{stage}_finished")
+        exit_code = a.get(f"last_{stage}_exit_code")
+        started   = a.get(f"last_{stage}_started")
+        if finished:
+            h_ago = round((_now_utc() - datetime.datetime.fromisoformat(finished)).total_seconds() / 3600, 1)
+            if exit_code == 0:
+                return f"terminé normalement il y a {h_ago}h"
+            else:
+                return f"CRASH (code {exit_code}) il y a {h_ago}h"
+        if started:
+            h_ago = round((_now_utc() - datetime.datetime.fromisoformat(started)).total_seconds() / 3600, 1)
+            return f"démarré il y a {h_ago}h (peut-être en cours)"
+        return "jamais lancé dans cette session"
+
     parts.append(f"\n=== ÉTAT INFRA ===")
     parts.append(f"Dernier scraper actif : {last_scraper}")
+    for stage, _ in PIPELINE_STAGES:
+        parts.append(f"  {stage:8s}: {_stage_status(stage)}")
     parts.append(f"Agent en cours        : {'OUI' if any_agent_running else 'non'}")
     parts.append(f"Actions prises aujourd'hui : {count_actions_today()}/{MAX_ACTIONS_PER_DAY}")
 
@@ -226,17 +356,24 @@ async def analyze_and_decide(any_agent_running: bool = False) -> dict:
     actions_remaining = MAX_ACTIONS_PER_DAY - count_actions_today()
 
     prompt = f"""Tu es CroustyLobster, IA co-fondatrice de VAO (SaaS devis paysagistes).
-Tu tournes en mode autonome et dois décider d'une action proactive.
+Tu tournes en mode autonome. Tu es le MANAGER du pipeline de leads : scraper → enrichir → nettoyer.
+Le pipeline avance automatiquement entre les étapes — tu n'as PAS besoin de relancer une étape qui vient de terminer normalement.
 
 Contexte :
 {context}
 
+IMPORTANT sur l'état infra :
+- Si un stage affiche "terminé normalement" → c'est NORMAL, l'infra n'est PAS bloquée.
+- Le pipeline avance automatiquement : scraper terminé → enrich se lance seul → clean se lance seul.
+- Ne lance SCRAPER que si : (a) aucun lead n'a été scrappé récemment ET des zones restent à couvrir, OU (b) tous les stages sont terminés depuis >48h et de nouvelles zones existent.
+- Ne lance PAS SCRAPER juste parce que le scraper est "inactif depuis Xh" — il a peut-être simplement terminé son travail.
+
 Tu dois choisir UNE action :
-- SCRAPER   : lancer le scraper géo (si peu de nouveaux leads récents ou scraper inactif >48h)
-- ENRICHIR  : lancer l'enrichissement (si des leads n'ont pas de gérant identifié)
-- NETTOYER  : lancer le nettoyage (si des leads hors-cible sont détectés)
-- ALERTER   : prévenir les fondateurs si situation critique ou hésitation
-- ATTENDRE  : rien à faire, situation normale
+- SCRAPER   : relancer le scraping (nouvelles zones à couvrir, pipeline complet terminé)
+- ENRICHIR  : lancer l'enrichissement si scraper terminé OK mais enrich pas fait récemment
+- NETTOYER  : lancer le nettoyage si enrich terminé OK mais clean pas fait récemment
+- ALERTER   : prévenir Quentin si situation critique, crash, ou hésitation
+- ATTENDRE  : pipeline en cours, ou situation normale, rien à faire
 
 RÈGLES IMPÉRATIVES :
 1. Si confiance < 80% et action active (SCRAPER/ENRICHIR/NETTOYER) → choisir ALERTER
@@ -302,6 +439,7 @@ async def execute_action(decision: dict, running_procs: dict) -> str:
         try:
             proc = subprocess.Popen(SCRAPER_CMD, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             running_procs["scraper"] = proc
+            _record_stage_started("scraper")
             alert = _load_json(ALERT_FILE, {})
             alert["last_scraper_active"] = _now_utc().isoformat()
             _save_json(ALERT_FILE, alert)
@@ -318,6 +456,7 @@ async def execute_action(decision: dict, running_procs: dict) -> str:
         try:
             proc = subprocess.Popen(ENRICH_CMD, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             running_procs["enrich"] = proc
+            _record_stage_started("enrich")
             result = f"Enrichissement lancé (PID {proc.pid})"
             await _broadcast(
                 f"🤖 *Action autonome — ENRICHIR*\n"
@@ -336,6 +475,7 @@ async def execute_action(decision: dict, running_procs: dict) -> str:
                 return "ANNULÉE — script clean.py introuvable"
             proc = subprocess.Popen(CLEAN_CMD, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             running_procs["clean"] = proc
+            _record_stage_started("clean")
             result = f"Nettoyage lancé (PID {proc.pid})"
             await _broadcast(
                 f"🤖 *Action autonome — NETTOYER*\n"
@@ -415,7 +555,25 @@ async def autonomous_loop_tick(running_procs: dict):
 
     print(f"[autonomous] Tick — {_now_paris().strftime('%d/%m %H:%M')} (Paris)")
 
+    # Pipeline manager : avance automatiquement scraper → enrich → clean
+    try:
+        pipeline_acted = await pipeline_advance(running_procs)
+    except Exception as e:
+        print(f"[autonomous] Erreur pipeline_advance : {e}")
+        pipeline_acted = False
+
     any_running = any(p.poll() is None for p in running_procs.values())
+
+    # Si le pipeline a déjà pris une action, pas besoin de consulter Claude ce tick
+    if pipeline_acted:
+        append_autonomous_log({
+            "date":       _now_utc().isoformat(),
+            "action":     "PIPELINE",
+            "reason":     "Avancement automatique du pipeline",
+            "confidence": "high",
+            "result":     "étape suivante lancée",
+        })
+        return
 
     try:
         decision   = await analyze_and_decide(any_agent_running=any_running)

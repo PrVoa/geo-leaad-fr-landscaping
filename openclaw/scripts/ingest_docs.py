@@ -10,7 +10,7 @@ Lit tous les PDFs de /opt/openclaw/docs/
 → sauvegarde dans /opt/openclaw/memory/knowledge_base.json
 """
 
-import json, re
+import json
 from pathlib import Path
 
 try:
@@ -55,14 +55,19 @@ def make_chunks(text: str, source: str) -> list[dict]:
     return chunks
 
 
-def build_keyword_index(chunks: list[dict]) -> dict[str, list[str]]:
-    """Index mot → liste de chunk ids (pour recherche rapide)."""
-    index: dict[str, list[str]] = {}
-    for chunk in chunks:
-        words = set(re.findall(r'\b\w{3,}\b', chunk["content"].lower()))
-        for w in words:
-            index.setdefault(w, []).append(chunk["id"])
-    return index
+
+def load_existing_sources() -> set[str]:
+    """Retourne les noms de sources déjà présentes dans la KB."""
+    if not KB_FILE.exists():
+        return set()
+    try:
+        with open(KB_FILE, encoding="utf-8") as f:
+            kb = json.load(f)
+        if isinstance(kb, list):
+            return {c["source"] for c in kb}
+    except Exception:
+        pass
+    return set()
 
 
 def main():
@@ -71,31 +76,50 @@ def main():
         print(f"Aucun PDF trouvé dans {DOCS_DIR} (ni ses sous-dossiers)")
         return
 
-    all_chunks: list[dict] = []
+    existing_sources = load_existing_sources()
+
+    # Charger les chunks déjà en base
+    existing_chunks: list[dict] = []
+    if KB_FILE.exists():
+        try:
+            with open(KB_FILE, encoding="utf-8") as f:
+                existing_chunks = json.load(f)
+            if not isinstance(existing_chunks, list):
+                existing_chunks = []
+        except Exception:
+            existing_chunks = []
+
+    new_chunks: list[dict] = []
+    skipped = 0
     for pdf in pdfs:
-        print(f"  Lecture : {pdf.name}")
+        source = pdf.stem
+        if source in existing_sources:
+            skipped += 1
+            continue
+        print(f"  Nouveau : {pdf.name}")
         try:
             text = extract_text(pdf)
         except Exception as e:
             print(f"    ✗ Erreur lecture : {e}")
             continue
-        chunks = make_chunks(text, pdf.stem)
+        chunks = make_chunks(text, source)
         print(f"    → {len(chunks)} chunks")
-        all_chunks.extend(chunks)
+        new_chunks.extend(chunks)
 
-    index = build_keyword_index(all_chunks)
+    if skipped:
+        print(f"  (ignorés — déjà ingérés : {skipped} PDF(s))")
 
-    kb = {
-        "chunks":  all_chunks,
-        "index":   index,
-        "sources": [p.stem for p in pdfs],
-        "total":   len(all_chunks),
-    }
+    if not new_chunks:
+        print(f"\n✅ Rien de nouveau à ingérer ({len(existing_chunks)} chunks existants).")
+        return
+
+    all_chunks = existing_chunks + new_chunks
+
     KB_FILE.parent.mkdir(parents=True, exist_ok=True)
     with open(KB_FILE, "w", encoding="utf-8") as f:
-        json.dump(kb, f, indent=2, ensure_ascii=False)
+        json.dump(all_chunks, f, indent=2, ensure_ascii=False)
 
-    print(f"\n✅ Knowledge base sauvegardée : {len(all_chunks)} chunks depuis {len(pdfs)} PDF(s)")
+    print(f"\n✅ {len(new_chunks)} nouveaux chunks ajoutés — total : {len(all_chunks)} chunks")
     print(f"   → {KB_FILE}")
 
 
