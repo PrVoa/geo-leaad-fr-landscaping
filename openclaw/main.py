@@ -390,16 +390,42 @@ async def analyze_checkin(author_name: str, content: str) -> str:
 
 # ─── TELEGRAM ─────────────────────────────────────────────────────────────────
 
+TG_MAX = 4096  # limite Telegram par message
+
+def _split_text(text: str, limit: int = TG_MAX) -> list[str]:
+    """
+    Découpe un texte en morceaux de `limit` caractères max.
+    Coupe sur les sauts de ligne quand possible pour ne pas casser le formatage.
+    """
+    if len(text) <= limit:
+        return [text]
+
+    parts = []
+    while text:
+        if len(text) <= limit:
+            parts.append(text)
+            break
+        # Cherche le dernier \n avant la limite
+        cut = text.rfind("\n", 0, limit)
+        if cut <= 0:
+            cut = limit  # pas de \n → coupe brut
+        parts.append(text[:cut])
+        text = text[cut:].lstrip("\n")
+
+    return parts
+
+
 async def send(chat_id: str, text: str):
     bot = Bot(token=BOT_TOKEN)
-    try:
-        await bot.send_message(chat_id=chat_id, text=text, parse_mode="Markdown")
-    except Exception:
-        clean = re.sub(r'[*_`\[\]]', '', text)
+    for i, part in enumerate(_split_text(text)):
         try:
-            await bot.send_message(chat_id=chat_id, text=clean)
+            await bot.send_message(chat_id=chat_id, text=part, parse_mode="Markdown")
         except Exception:
-            pass
+            clean = re.sub(r'[*_`\[\]]', '', part)
+            try:
+                await bot.send_message(chat_id=chat_id, text=clean)
+            except Exception:
+                pass
 
 async def broadcast(text: str):
     for cid in CHAT_IDS:
@@ -412,14 +438,15 @@ def esc(s: str) -> str:
     return re.sub(r'[*_`\[\]]', '', str(s))
 
 async def safe_reply(update: Update, text: str, markdown: bool = True):
-    if markdown:
-        try:
-            await update.message.reply_text(text, parse_mode="Markdown")
-            return
-        except Exception:
-            pass
-    clean = re.sub(r'[*_`\[\]\\]', '', text)
-    await update.message.reply_text(clean)
+    for part in _split_text(text):
+        if markdown:
+            try:
+                await update.message.reply_text(part, parse_mode="Markdown")
+                continue
+            except Exception:
+                pass
+        clean = re.sub(r'[*_`\[\]\\]', '', part)
+        await update.message.reply_text(clean)
 
 
 def tail_logs(n: int = 20) -> str:
@@ -879,23 +906,31 @@ async def cmd_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def cmd_logs(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not authorized(update): return
     logs = tail_logs(20)
-    await safe_reply(update, f"```\n{logs[-3800:]}\n```")
+    await safe_reply(update, f"```\n{logs}\n```")
 
 
 async def cmd_ingest(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not authorized(update): return
-    await safe_reply(update, "📚 Ingestion des PDFs en cours...", markdown=False)
-    try:
-        result = subprocess.run(
-            ["/opt/openclaw/venv/bin/python", "/opt/openclaw/scripts/ingest_docs.py"],
-            capture_output=True, text=True, timeout=120,
-        )
-        out = result.stdout.strip() or result.stderr.strip() or "Terminé sans sortie."
-        await safe_reply(update, f"```\n{out[-3000:]}\n```")
-    except subprocess.TimeoutExpired:
-        await safe_reply(update, "❌ Timeout — ingestion trop longue.", markdown=False)
-    except Exception as e:
-        await safe_reply(update, f"❌ Erreur : {e}", markdown=False)
+
+    kb_before = len(load_kb() or [])
+    await safe_reply(update, f"📚 Ingestion en cours… ({kb_before} chunks en base)\nJe te préviens quand c'est terminé.", markdown=False)
+
+    async def _run():
+        try:
+            result = await asyncio.to_thread(
+                subprocess.run,
+                ["/opt/openclaw/venv/bin/python", "/opt/openclaw/scripts/ingest_docs.py"],
+                capture_output=True, text=True,
+            )
+            out = result.stdout.strip() or result.stderr.strip() or "Terminé sans sortie."
+            kb_after = len(load_kb() or [])
+            added    = kb_after - kb_before
+            status   = f"✅ +{added} chunks" if added > 0 else "✅ Rien de nouveau"
+            await broadcast(f"{status} — {kb_after} chunks au total\n```\n{out}\n```")
+        except Exception as e:
+            await broadcast(f"❌ Erreur ingestion : {e}")
+
+    asyncio.create_task(_run())
 
 
 async def cmd_brief(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -905,15 +940,26 @@ async def cmd_brief(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # ─── INGESTION DOCUMENT TELEGRAM ──────────────────────────────────────────────
 
-def _extract_text_pdf(path: Path) -> str:
-    import pdfplumber
-    parts = []
-    with pdfplumber.open(path) as pdf:
-        for page in pdf.pages:
-            t = page.extract_text()
-            if t:
-                parts.append(t)
-    return "\n".join(parts)
+SUPPORTED_MIME = {"application/pdf", "text/plain"}
+SUPPORTED_EXT  = {".pdf", ".txt"}
+
+def _extract_text_file(path: Path) -> str:
+    if path.suffix.lower() == ".pdf":
+        import pdfplumber
+        parts = []
+        with pdfplumber.open(path) as pdf:
+            for page in pdf.pages:
+                t = page.extract_text()
+                if t:
+                    parts.append(t)
+        return "\n".join(parts)
+    # txt — essai plusieurs encodages
+    for enc in ("utf-8", "utf-8-sig", "latin-1"):
+        try:
+            return path.read_text(encoding=enc)
+        except UnicodeDecodeError:
+            continue
+    return ""
 
 def _make_chunks(text: str, source: str, chunk_size: int = 500, overlap: int = 50) -> list[dict]:
     words = text.split()
@@ -931,37 +977,33 @@ def _make_chunks(text: str, source: str, chunk_size: int = 500, overlap: int = 5
         start  = end - overlap
     return chunks
 
-def _ingest_pdf(pdf_path: Path) -> tuple[int, bool]:
-    """
-    Ingère un PDF dans la KB. Retourne (nb_chunks_ajoutés, déjà_connu).
-    """
-    source = pdf_path.stem
+def _ingest_file(file_path: Path) -> tuple[int, bool]:
+    """Ingère un fichier dans la KB. Retourne (nb_chunks_ajoutés, déjà_connu)."""
+    source = file_path.stem
     kb = load_kb() or []
-    existing_sources = {c["source"] for c in kb}
-
-    if source in existing_sources:
+    if source in {c["source"] for c in kb}:
         return 0, True
-
-    text = _extract_text_pdf(pdf_path)
+    text = _extract_text_file(file_path)
     if not text.strip():
         return 0, False
-
     new_chunks = _make_chunks(text, source)
     kb.extend(new_chunks)
-
     KB_FILE.parent.mkdir(parents=True, exist_ok=True)
     with open(KB_FILE, "w", encoding="utf-8") as f:
         json.dump(kb, f, indent=2, ensure_ascii=False)
-
     return len(new_chunks), False
 
 
 async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not authorized(update): return
 
-    doc = update.message.document
-    if not doc.mime_type or doc.mime_type != "application/pdf":
-        await safe_reply(update, "⚠️ Seuls les PDFs sont supportés pour l'instant.", markdown=False)
+    doc  = update.message.document
+    mime = doc.mime_type or ""
+    name = doc.file_name or ""
+    ext  = Path(name).suffix.lower()
+
+    if mime not in SUPPORTED_MIME and ext not in SUPPORTED_EXT:
+        await safe_reply(update, "⚠️ Format non supporté. Envoie un PDF ou un fichier texte (.txt).", markdown=False)
         return
 
     # Nom de fichier sécurisé
@@ -983,7 +1025,7 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     try:
-        added, already_known = _ingest_pdf(dest)
+        added, already_known = await asyncio.to_thread(_ingest_file, dest)
     except Exception as e:
         await safe_reply(update, f"❌ Erreur ingestion : {e}", markdown=False)
         return
@@ -993,7 +1035,7 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     if added == 0:
-        await safe_reply(update, f"⚠️ PDF reçu mais aucun texte extrait (*{esc(raw_name)}*).", markdown=False)
+        await safe_reply(update, f"⚠️ Fichier reçu mais aucun texte extrait (*{esc(raw_name)}*).", markdown=False)
         return
 
     kb_total = len(load_kb() or [])
@@ -1229,7 +1271,7 @@ async def main():
     app.add_handler(CommandHandler("autonome",       cmd_autonome))
     app.add_handler(CommandHandler("decisions",      cmd_decisions))
     app.add_handler(CommandHandler("plan",           cmd_plan))
-    app.add_handler(MessageHandler(filters.Document.PDF, handle_document))
+    app.add_handler(MessageHandler(filters.Document.PDF | filters.Document.TXT, handle_document))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
     await app.initialize()
