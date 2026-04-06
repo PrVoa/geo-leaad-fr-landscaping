@@ -224,6 +224,17 @@ def get_ram_free_pct() -> float | None:
 
 # ─── RAG ──────────────────────────────────────────────────────────────────────
 
+# Mots vides FR+EN à ignorer dans la recherche (évite les faux positifs)
+_STOP_WORDS = {
+    'tu', 'as', 'les', 'le', 'la', 'un', 'une', 'des', 'de', 'et', 'en', 'est',
+    'il', 'elle', 'ils', 'elles', 'nous', 'vous', 'ce', 'ca', 'se', 'si',
+    'ne', 'pas', 'plus', 'sur', 'par', 'au', 'aux', 'du', 'me', 'te', 'je', 'on',
+    'que', 'qui', 'ou', 'mais', 'avec', 'pour', 'dans', 'ai', 'son', 'sa', 'mon',
+    'ma', 'ton', 'ta', 'nos', 'vos', 'leur', 'leurs', 'cet', 'cette', 'ces',
+    'the', 'is', 'in', 'of', 'to', 'and', 'for', 'this', 'that', 'it', 'are',
+    'by', 'at', 'be', 'an',
+}
+
 def load_kb() -> list | None:
     if not KB_FILE.exists():
         return None
@@ -238,16 +249,24 @@ def search_kb(query: str, top_k: int = 3) -> list[str]:
     kb = load_kb()
     if not kb:
         return []
-    words = set(re.findall(r'\b\w{3,}\b', query.lower()))
+    # Mots 2+ chars, stop words filtrés pour éviter les faux positifs
+    words = set(re.findall(r'\b\w{2,}\b', query.lower())) - _STOP_WORDS
     if not words:
         return []
     scores: dict[int, int] = {}
     for i, chunk in enumerate(kb):
-        chunk_words = set(re.findall(r'\b\w{3,}\b', chunk["content"].lower()))
+        # Cherche dans content + source + id pour trouver les transcripts P1/P2...
+        haystack = " ".join([
+            chunk.get("content", ""),
+            chunk.get("source", ""),
+            chunk.get("id", ""),
+        ]).lower()
+        chunk_words = set(re.findall(r'\b\w{2,}\b', haystack)) - _STOP_WORDS
         score = len(words & chunk_words)
         if score > 0:
             scores[i] = score
     top_indices = sorted(scores, key=lambda x: scores[x], reverse=True)[:top_k]
+    print(f"[KB] search_kb('{query[:50]}') → {len(scores)} matches, top {len(top_indices)} retenus (mots: {words})")
     return [kb[i]["content"] for i in top_indices]
 
 
@@ -293,6 +312,27 @@ def build_system_prompt() -> str:
         if top_statuts:
             parts.append(f"Statuts : {top_statuts}")
         parts.append(f"(màj {business.get('derniere_maj','')[:10]})")
+
+    # Injection KB : sources disponibles + 3 chunks récents (sans recherche active)
+    kb = load_kb()
+    if kb:
+        sources = sorted({c.get("source", "") for c in kb if c.get("source")})
+        transcript_sources = [s for s in sources if "transcript" in s.lower() or re.match(r'P\d+', s)]
+        other_sources = [s for s in sources if s not in transcript_sources]
+        parts.append("\n--- BASE DE CONNAISSANCE (KB) ---")
+        parts.append(f"Tu as accès à {len(kb)} chunks dans ta KB.")
+        parts.append(f"TRANSCRIPTIONS DISPONIBLES ({len(transcript_sources)}) : {', '.join(transcript_sources)}")
+        parts.append(f"Autres sources ({len(other_sources)}) : {', '.join(other_sources[:30])}")
+        # Injecter des chunks de transcriptions en priorité
+        transcript_chunks = [
+            c for c in kb
+            if re.match(r'P\d+', c.get("source", "")) or "transcript" in c.get("source", "").lower()
+        ]
+        inject_chunks = transcript_chunks[-3:] if transcript_chunks else kb[-3:]
+        parts.append(f"3 chunks de transcriptions chargés automatiquement (sur {len(transcript_chunks)} disponibles) :")
+        for chunk in inject_chunks:
+            src = chunk.get("source", "?")
+            parts.append(f"  [{src}] {chunk.get('content','')[:300]}")
 
     return "\n".join(parts)
 
@@ -738,6 +778,7 @@ async def scheduler_loop():
     last_crash_check      = None
     last_business_refresh = None
     last_autonomous_tick  = None
+    last_pipeline_check   = None
     last_checkin_date     = None
     last_summary_week     = None
     last_brief_date       = None
@@ -760,8 +801,22 @@ async def scheduler_loop():
                 pass
             last_business_refresh = now
 
-        # Boucle autonome toutes les heures
-        if last_autonomous_tick is None or (now - last_autonomous_tick).total_seconds() >= 3600:
+        # Pipeline manager toutes les heures (indépendant du tick autonome)
+        if last_pipeline_check is None or (now - last_pipeline_check).total_seconds() >= 3600:
+            print(f"[PIPELINE] Vérification étape suivante... ({now_paris().strftime('%d/%m %H:%M')})")
+            try:
+                from autonomous_loop import pipeline_advance as _pipeline_advance
+                acted = await _pipeline_advance(running_procs)
+                if acted:
+                    print("[PIPELINE] Action prise — étape suivante lancée.")
+                else:
+                    print("[PIPELINE] Rien à avancer pour l'instant.")
+            except Exception as e:
+                print(f"[PIPELINE] Erreur pipeline_advance : {e}")
+            last_pipeline_check = now
+
+        # Boucle autonome 2x par jour
+        if last_autonomous_tick is None or (now - last_autonomous_tick).total_seconds() >= 43200:
             try:
                 await autonomous_loop_tick(running_procs)
             except Exception:

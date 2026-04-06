@@ -583,7 +583,7 @@ async def logs(
         buf: deque[str] = deque(maxlen=lines)
         with open(log_file, "r", encoding="utf-8", errors="replace") as f:
             for line in f:
-                if not agent or f"geolaad.{agent}" in line:
+                if not agent or f"geoleaad.{agent}" in line:
                     buf.append(line.rstrip())
         return list(buf)
 

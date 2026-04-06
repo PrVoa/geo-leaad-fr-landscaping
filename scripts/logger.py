@@ -24,7 +24,7 @@ _FMT = logging.Formatter(
 )
 
 # Logger racine commun à tous les scripts du projet
-_root = logging.getLogger("geolaad")
+_root = logging.getLogger("geoleaad")
 if not _root.handlers:
     _root.setLevel(logging.DEBUG)
 
@@ -49,5 +49,5 @@ if not _root.handlers:
 
 
 def get_logger(name: str) -> logging.Logger:
-    """Retourne un logger enfant de 'geolaad', qui écrit dans logs/app.log."""
-    return logging.getLogger(f"geolaad.{name}")
+    """Retourne un logger enfant de 'geoleaad', qui écrit dans logs/app.log."""
+    return logging.getLogger(f"geoleaad.{name}")

@@ -96,6 +96,37 @@ def set_autonomous_mode(active: bool):
 
 # ─── PIPELINE MANAGER ────────────────────────────────────────────────────────
 
+def _sync_pipeline_state_from_business():
+    """
+    Infère l'état du pipeline depuis business.json pour éviter les faux 'jamais lancé'.
+    À appeler AVANT pipeline_advance() pour que les conditions de déclenchement soient correctes.
+    """
+    business = _load_json(BUSINESS_FILE, {})
+    try:
+        leads_total = int(business.get("leads_total", 0) or 0)
+        enrichis    = int(business.get("enrichis",    0) or 0)
+    except (ValueError, TypeError):
+        return
+
+    alert   = _load_json(ALERT_FILE, {})
+    changed = False
+
+    if leads_total > 1000 and not alert.get("last_scraper_finished"):
+        alert["last_scraper_finished"]  = _now_utc().isoformat()
+        alert["last_scraper_exit_code"] = 0
+        changed = True
+        print(f"[PIPELINE] Inférence : scraper terminé ({leads_total} leads en base) → alert_state mis à jour")
+
+    if enrichis > 0 and not alert.get("last_enrich_finished"):
+        alert["last_enrich_finished"]  = _now_utc().isoformat()
+        alert["last_enrich_exit_code"] = 0
+        changed = True
+        print(f"[PIPELINE] Inférence : enrich terminé ({enrichis} enrichis en base) → alert_state mis à jour")
+
+    if changed:
+        _save_json(ALERT_FILE, alert)
+
+
 def _record_stage_started(stage: str):
     """Marque qu'un stage a démarré (réinitialise la fin précédente)."""
     alert = _load_json(ALERT_FILE, {})
@@ -132,40 +163,56 @@ async def pipeline_advance(running_procs: dict) -> bool:
     """
     Vérifie si un stage du pipeline vient de terminer et lance le suivant.
     Appelé à chaque tick avant analyze_and_decide.
+    Couvre aussi le cas post-restart (proc non tracké mais alert_state à jour).
     Retourne True si une action a été prise.
     """
+    # Synchronise l'état depuis business.json (évite faux "jamais lancé")
+    _sync_pipeline_state_from_business()
+
     for i, (stage, _) in enumerate(PIPELINE_STAGES[:-1]):
         proc = running_procs.get(stage)
-        if proc is None or proc.poll() is None:
-            continue  # pas lancé ou encore en cours
-
-        exit_code  = proc.returncode
-        _record_stage_finished(stage, exit_code)
-
-        if exit_code != 0:
-            # Crash — alerte et on n'avance pas
-            alert = _load_json(ALERT_FILE, {})
-            crash_key = f"{stage}_crash_alerted"
-            if not alert.get(crash_key):
-                alert[crash_key] = _now_utc().isoformat()
-                _save_json(ALERT_FILE, alert)
-                await _broadcast(
-                    f"❌ *Pipeline — {stage.upper()} a crashé*\n"
-                    f"Code de sortie : `{exit_code}`\n"
-                    f"Quentin, vérifiez les logs avec /logs."
-                )
-            continue
-
         next_stage, next_cmd = PIPELINE_STAGES[i + 1]
 
-        if not _pipeline_next_needed(stage, next_stage):
+        print(f"[PIPELINE] Vérification {stage.upper()} → {next_stage.upper()}...")
+
+        # Encore en cours dans cette session → skip
+        if proc is not None and proc.poll() is None:
+            print(f"[PIPELINE] {stage.upper()} toujours en cours (PID {proc.pid}) — skip")
+            continue
+
+        # Process suivi ET terminé → enregistrer la fin
+        if proc is not None:
+            exit_code = proc.returncode
+            print(f"[PIPELINE] {stage.upper()} terminé (exit {exit_code}) — enregistrement")
+            _record_stage_finished(stage, exit_code)
+            if exit_code != 0:
+                alert = _load_json(ALERT_FILE, {})
+                crash_key = f"{stage}_crash_alerted"
+                if not alert.get(crash_key):
+                    alert[crash_key] = _now_utc().isoformat()
+                    _save_json(ALERT_FILE, alert)
+                    await _broadcast(
+                        f"❌ *Pipeline — {stage.upper()} a crashé*\n"
+                        f"Code de sortie : `{exit_code}`\n"
+                        f"Quentin, vérifiez les logs avec /logs."
+                    )
+                continue
+
+        # Vérifier si l'étape suivante est nécessaire
+        # (process suivi ou non — couvre le cas post-restart où proc=None)
+        needed = _pipeline_next_needed(stage, next_stage)
+        print(f"[PIPELINE] {next_stage.upper()} nécessaire ? {'OUI' if needed else 'non'}")
+
+        if not needed:
             continue  # déjà avancé
 
         next_proc = running_procs.get(next_stage)
         if next_proc and next_proc.poll() is None:
+            print(f"[PIPELINE] {next_stage.upper()} déjà en cours (PID {next_proc.pid}) — skip")
             continue  # déjà en cours
 
         if count_actions_today() >= MAX_ACTIONS_PER_DAY:
+            print(f"[PIPELINE] Quota journalier atteint — {next_stage.upper()} en attente")
             await _broadcast(
                 f"⚠️ *Pipeline en attente* — quota journalier atteint.\n"
                 f"Prochaine étape : *{next_stage.upper()}* (sera lancée demain)."
@@ -173,11 +220,13 @@ async def pipeline_advance(running_procs: dict) -> bool:
             return False
 
         try:
+            print(f"[PIPELINE] Lancement {next_stage.upper()}... ({next_cmd[-1]})")
             proc_next = subprocess.Popen(next_cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             running_procs[next_stage] = proc_next
             _record_stage_started(next_stage)
 
             result = f"{next_stage} lancé (PID {proc_next.pid})"
+            print(f"[PIPELINE] ✅ {result}")
             await _broadcast(
                 f"🤖 *Pipeline → {next_stage.upper()}*\n"
                 f"_{stage.upper()} terminé normalement — étape suivante démarrée automatiquement_\n\n"
@@ -192,6 +241,7 @@ async def pipeline_advance(running_procs: dict) -> bool:
             })
             return True
         except Exception as e:
+            print(f"[PIPELINE] ❌ Erreur lancement {next_stage} : {e}")
             await _broadcast(f"❌ Erreur pipeline {next_stage} : {e}")
 
     return False
