@@ -28,7 +28,11 @@ EXTRACT_DAILY_LIMIT  = 20       # extractions max par jour
 TOKEN_DAILY_LIMIT    = 100_000  # tokens/jour au-delà desquels on coupe extract
 
 SUPABASE_URL = os.getenv("SUPABASE_URL", "")
-SUPABASE_KEY = os.getenv("SUPABASE_KEY", "")
+SUPABASE_KEY = os.getenv("SUPABASE_KEY", "") or os.getenv("SUPABASE_ANON_KEY", "")
+
+# Supabase Lovable — écriture des tâches (CroustyLobster Trello)
+SUPABASE_LOVABLE_URL = os.getenv("SUPABASE_LOVABLE_URL", "https://jttkqccknmbattmebqnu.supabase.co")
+SUPABASE_LOVABLE_KEY = os.getenv("SUPABASE_LOVABLE_SERVICE_KEY", "")
 BOT_TOKEN    = os.getenv("TELEGRAM_BOT_TOKEN")
 CHAT_ID_1    = os.getenv("TELEGRAM_CHAT_ID_1")
 CHAT_ID_2    = os.getenv("TELEGRAM_CHAT_ID_2")
@@ -39,6 +43,8 @@ client   = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
 CHAT_IDS = [c for c in [CHAT_ID_1, CHAT_ID_2] if c]
 
 awaiting_journal: set[str] = set()
+# Tâches proposées en attente de validation : chat_id -> list[dict]
+pending_tasks: dict[str, list[dict]] = {}
 running_procs: dict[str, subprocess.Popen] = {}
 
 # Fenêtre glissante 20 messages par chat_id
@@ -428,6 +434,307 @@ async def analyze_checkin(author_name: str, content: str) -> str:
         return f"(Analyse impossible : {e})"
 
 
+# ─── PROPOSITION DE TÂCHES POUR DEMAIN ────────────────────────────────────────
+
+VALID_TAGS = {"Prospection", "Dev", "Scraping", "Admin"}
+VALID_ASSIGNEES = {"Quentin", "Laurie"}
+
+async def propose_tasks_for_tomorrow(author_name: str, content: str, analyse: str) -> list[dict]:
+    """Demande à Claude 2-3 tâches concrètes pour demain. Retourne une liste de dicts."""
+    prompt = (
+        f"{author_name} vient de faire son check-in du soir sur le projet VAO :\n"
+        f"\"{content}\"\n\n"
+        f"Analyse : {analyse}\n\n"
+        "Propose 2 ou 3 tâches CONCRÈTES pour demain, basées sur ce qui a été dit. "
+        "Réponds STRICTEMENT en JSON (aucun texte autour) avec ce format :\n"
+        '{"tasks": [{"title": "...", "tag": "Prospection|Dev|Scraping|Admin", '
+        '"assigned_to": "Quentin|Laurie"}]}\n'
+        "Règles : titres courts et actionnables, tag obligatoire parmi la liste, "
+        "assigned_to selon le contexte (Quentin = dev/scraping/tech, Laurie = prospection/admin/commercial)."
+    )
+    try:
+        resp = client.messages.create(
+            model="claude-sonnet-4-5",
+            max_tokens=600,
+            messages=[{"role": "user", "content": prompt}],
+        )
+        raw = resp.content[0].text.strip()
+        m = re.search(r'\{.*\}', raw, re.DOTALL)
+        data = json.loads(m.group(0) if m else raw)
+        tasks = data.get("tasks", [])[:3]
+        cleaned = []
+        for t in tasks:
+            title = (t.get("title") or "").strip()
+            tag = t.get("tag", "Admin")
+            if tag not in VALID_TAGS:
+                tag = "Admin"
+            assigned = t.get("assigned_to", "Quentin")
+            if assigned not in VALID_ASSIGNEES:
+                assigned = "Quentin"
+            if title:
+                cleaned.append({"title": title, "tag": tag, "assigned_to": assigned})
+        return cleaned
+    except Exception:
+        return []
+
+
+def format_task_proposal(tasks: list[dict]) -> str:
+    lines = ["Sur la base de ta journée, je te propose ces tâches pour demain :", ""]
+    for i, t in enumerate(tasks, 1):
+        lines.append(f"{i}. {t['title']} — {t['tag']} — assigné à {t['assigned_to']}")
+    lines.append("")
+    lines.append("Je les ajoute dans le Trello ? (oui / modifier / non)")
+    return "\n".join(lines)
+
+
+# ─── SUPABASE TASKS ───────────────────────────────────────────────────────────
+
+def _supabase_headers() -> dict:
+    """Headers pour le Supabase Lovable (écriture des tâches)."""
+    return {
+        "apikey": SUPABASE_LOVABLE_KEY,
+        "Authorization": f"Bearer {SUPABASE_LOVABLE_KEY}",
+        "Content-Type": "application/json",
+        "Prefer": "return=representation",
+    }
+
+
+def _title_prefix(title: str) -> str:
+    """4 premiers mots normalisés, pour comparaison souple."""
+    words = re.findall(r'\w+', title.lower())
+    return " ".join(words[:4])
+
+
+async def _find_existing_task(http, title: str) -> dict | None:
+    """
+    Cherche un doublon dans Supabase :
+    - 4 premiers mots du titre identiques
+    - status != "done" → bloque
+    - status == "done" et < 7j → bloque ; > 7j → recréable
+    """
+    try:
+        prefix = _title_prefix(title)
+        if not prefix:
+            return None
+        first_word = prefix.split()[0]
+        url = f"{SUPABASE_LOVABLE_URL}/rest/v1/tasks"
+        params = {
+            "select": "id,title,status,created_at",
+            "title": f"ilike.{first_word}%",
+            "order": "created_at.desc",
+            "limit": "50",
+        }
+        r = await http.get(url, headers=_supabase_headers(), params=params)
+        if r.status_code != 200:
+            return None
+        rows = r.json() or []
+        now = datetime.datetime.utcnow()
+        for row in rows:
+            if _title_prefix(row.get("title", "")) != prefix:
+                continue
+            status = (row.get("status") or "").lower()
+            if status != "done":
+                return row
+            created = row.get("created_at", "")
+            try:
+                dt = datetime.datetime.fromisoformat(created.replace("Z", "+00:00")).replace(tzinfo=None)
+                if (now - dt).days <= 7:
+                    return row
+            except Exception:
+                return row
+        return None
+    except Exception:
+        return None
+
+
+async def insert_tasks_supabase(tasks: list[dict]) -> dict:
+    """
+    Insère les tâches dans Supabase avec dédoublonnage.
+    Retourne {'inserted': [...], 'skipped': [{'title':..., 'status':...}], 'error': str|None}
+    """
+    if not SUPABASE_LOVABLE_URL or not SUPABASE_LOVABLE_KEY:
+        return {"inserted": [], "skipped": [], "error": "Supabase Lovable non configuré (SUPABASE_LOVABLE_URL/SERVICE_KEY)"}
+    try:
+        import httpx
+    except ImportError:
+        return {"inserted": [], "skipped": [], "error": "httpx non installé"}
+
+    now = datetime.datetime.utcnow()
+    tomorrow = (now + datetime.timedelta(days=1)).date().isoformat()
+    inserted, skipped = [], []
+
+    async with httpx.AsyncClient(timeout=15.0) as http:
+        for t in tasks:
+            existing = await _find_existing_task(http, t["title"])
+            if existing:
+                skipped.append({"title": t["title"], "status": existing.get("status", "?")})
+                continue
+            payload = {
+                "title": t["title"],
+                "status": "todo",
+                "assigned_to": t["assigned_to"],
+                "tag": t["tag"],
+                "created_by": "CroustyLobster",
+                "due_date": tomorrow,
+            }
+            try:
+                r = await http.post(
+                    f"{SUPABASE_LOVABLE_URL}/rest/v1/tasks",
+                    headers=_supabase_headers(),
+                    json=payload,
+                )
+                if r.status_code in (200, 201):
+                    inserted.append(t)
+                else:
+                    return {
+                        "inserted": inserted,
+                        "skipped": skipped,
+                        "error": f"Supabase {r.status_code}: {r.text[:200]}",
+                    }
+            except Exception as e:
+                return {"inserted": inserted, "skipped": skipped, "error": str(e)}
+
+    return {"inserted": inserted, "skipped": skipped, "error": None}
+
+
+async def _journal_entry_exists(http, titre: str) -> bool:
+    """Vérifie qu'aucune entrée journal avec ce titre n'existe déjà."""
+    try:
+        r = await http.get(
+            f"{SUPABASE_LOVABLE_URL}/rest/v1/journal",
+            headers=_supabase_headers(),
+            params={"select": "id", "titre": f"eq.{titre}", "limit": "1"},
+        )
+        return r.status_code == 200 and bool(r.json())
+    except Exception:
+        return False
+
+
+async def fill_daily_journal():
+    """
+    Génère un résumé de la journée à partir des check-ins reçus
+    et l'insère dans le journal Lovable. Silencieux (pas de Telegram).
+    """
+    import logging
+    log = logging.getLogger("openclaw.journal")
+
+    paris = now_paris()
+    today = paris.date()
+    today_str = today.isoformat()
+
+    # Récupérer les entrées de journal d'aujourd'hui (depuis 21h Paris)
+    entries = load_json(JOURNAL_FILE, [])
+    todays = []
+    for e in entries:
+        try:
+            dt_utc = datetime.datetime.fromisoformat(e.get("date", "").replace("Z", "+00:00"))
+            dt_paris = dt_utc.astimezone(paris.tzinfo)
+            if dt_paris.date() == today and dt_paris.hour >= 21:
+                todays.append(e)
+        except Exception:
+            continue
+
+    if not todays:
+        log.info("[journal] Aucun check-in aujourd'hui → rien à insérer.")
+        return
+
+    # Générer le résumé via Haiku
+    checkins_text = "\n\n".join(
+        f"[{e.get('auteur','?')}] {e.get('contenu','')}\nAnalyse : {e.get('analyse','')}"
+        for e in todays
+    )
+    prompt = (
+        f"Voici les check-ins du soir reçus aujourd'hui ({today_str}) :\n\n"
+        f"{checkins_text}\n\n"
+        "Génère un résumé structuré de la journée en français, en 4 sections courtes :\n"
+        "1. Ce qui a été fait\n"
+        "2. Décisions prises (si mentionnées)\n"
+        "3. Blocages (si mentionnés)\n"
+        "4. Mood général de la journée\n\n"
+        "Reste factuel, concis, sans préambule."
+    )
+    try:
+        resp = client.messages.create(
+            model="claude-haiku-4-5-20251001",
+            max_tokens=600,
+            messages=[{"role": "user", "content": prompt}],
+        )
+        contenu = resp.content[0].text.strip()
+    except Exception as e:
+        log.warning(f"[journal] Génération résumé échouée : {e}")
+        return
+
+    # Tags selon le contenu
+    tags = []
+    low = contenu.lower()
+    if "décision" in low or "decision" in low:
+        tags.append("Décision")
+    if "appris" in low or "apprentissage" in low or "learning" in low:
+        tags.append("Apprentissage")
+    if "blocage" in low or "bloqué" in low or "problème" in low:
+        tags.append("Blocage")
+
+    # Numéro de semaine ISO + date du lundi
+    iso_year, iso_week, _ = today.isocalendar()
+    monday = today - datetime.timedelta(days=today.weekday())
+    semaine = f"Semaine {iso_week} - {monday.isoformat()}"
+
+    titre = f"Journée du {today_str}"
+    payload = {
+        "titre": titre,
+        "contenu": contenu,
+        "tags": tags,
+        "semaine": semaine,
+        "auteur": "CroustyLobster",
+    }
+
+    if not SUPABASE_LOVABLE_URL or not SUPABASE_LOVABLE_KEY:
+        log.warning("[journal] Supabase Lovable non configuré.")
+        return
+
+    try:
+        import httpx
+    except ImportError:
+        log.warning("[journal] httpx non installé.")
+        return
+
+    try:
+        async with httpx.AsyncClient(timeout=15.0) as http:
+            if await _journal_entry_exists(http, titre):
+                log.info(f"[journal] Entrée « {titre} » déjà présente → skip.")
+                return
+            r = await http.post(
+                f"{SUPABASE_LOVABLE_URL}/rest/v1/journal",
+                headers=_supabase_headers(),
+                json=payload,
+            )
+            if r.status_code in (200, 201):
+                log.info(f"[journal] Entrée « {titre} » insérée.")
+            else:
+                log.warning(f"[journal] Insertion KO {r.status_code}: {r.text[:200]}")
+    except Exception as e:
+        log.warning(f"[journal] Exception insertion : {e}")
+
+
+def format_insertion_result(result: dict) -> str:
+    if result.get("error"):
+        return f"❌ Erreur Supabase : {result['error']}"
+    inserted = result.get("inserted", [])
+    skipped = result.get("skipped", [])
+    lines = [f"Ajouté dans le Trello : {len(inserted)} nouvelle(s) tâche(s)"]
+    if inserted:
+        counts: dict[str, int] = {}
+        for t in inserted:
+            counts[t["assigned_to"]] = counts.get(t["assigned_to"], 0) + 1
+        for who, n in counts.items():
+            lines.append(f"  • {who} : {n} tâche(s) pour demain")
+    if skipped:
+        lines.append(f"\nIgnoré (déjà existant) : {len(skipped)} tâche(s)")
+        for s in skipped:
+            lines.append(f"  • « {s['title']} » existe déjà (statut : {s['status']})")
+    return "\n".join(lines)
+
+
 # ─── TELEGRAM ─────────────────────────────────────────────────────────────────
 
 TG_MAX = 4096  # limite Telegram par message
@@ -783,6 +1090,7 @@ async def scheduler_loop():
     last_summary_week     = None
     last_brief_date       = None
     last_report_date      = None
+    last_journal_date     = None
 
     while True:
         now   = now_utc()
@@ -838,6 +1146,14 @@ async def scheduler_loop():
             except Exception:
                 pass
             last_checkin_date = today
+
+        # Remplissage journal Lovable à 23h59 (silencieux, skip si aucun check-in)
+        if paris.hour == 23 and paris.minute >= 59 and last_journal_date != today:
+            try:
+                await fill_daily_journal()
+            except Exception as e:
+                print(f"[journal] erreur fill_daily_journal : {e}")
+            last_journal_date = today
 
         # Résumé hebdo dimanche à 20h
         week_num = paris.isocalendar()[1]
@@ -1198,6 +1514,26 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text        = update.message.text
     author_name = update.effective_user.first_name or "Fondateur"
 
+    # Validation des tâches proposées (oui/ok/non/modifier)
+    if chat_id in pending_tasks:
+        answer = text.strip().lower()
+        if answer in {"oui", "ok", "yes", "y", "o"}:
+            tasks = pending_tasks.pop(chat_id)
+            await safe_reply(update, "⏳ Insertion dans Supabase…", markdown=False)
+            result = await insert_tasks_supabase(tasks)
+            await safe_reply(update, format_insertion_result(result), markdown=False)
+            return
+        if answer in {"non", "no", "n"}:
+            pending_tasks.pop(chat_id, None)
+            await safe_reply(update, "Ok, j'oublie ces propositions.", markdown=False)
+            return
+        if answer.startswith("modif"):
+            pending_tasks.pop(chat_id, None)
+            await safe_reply(update, "Ok, dis-moi comment tu veux modifier la liste.", markdown=False)
+            return
+        # Autre réponse → on abandonne la proposition et on traite normalement
+        pending_tasks.pop(chat_id, None)
+
     # Réponse au check-in quotidien
     if chat_id in awaiting_journal:
         awaiting_journal.discard(chat_id)
@@ -1207,6 +1543,12 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         asyncio.create_task(extract_and_save_memory(text, analyse))
         reply = f"✅ *Noté dans le journal !*\n\n{analyse}"
         await safe_reply(update, reply)
+
+        # Propositions de tâches pour demain
+        tasks = await propose_tasks_for_tomorrow(author_name, text, analyse)
+        if tasks:
+            pending_tasks[chat_id] = tasks
+            await safe_reply(update, format_task_proposal(tasks), markdown=False)
         return
 
     # Contexte VAO + RAG
