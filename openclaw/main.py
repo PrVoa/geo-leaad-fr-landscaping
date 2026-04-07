@@ -418,7 +418,7 @@ async def analyze_checkin(author_name: str, content: str) -> str:
     )
     try:
         resp = client.messages.create(
-            model="claude-opus-4-5",
+            model="claude-sonnet-4-5",
             max_tokens=200,
             system=build_system_prompt(),
             messages=[{"role": "user", "content": prompt}],
@@ -698,7 +698,7 @@ async def morning_brief():
 
     try:
         resp = client.messages.create(
-            model="claude-opus-4-5",
+            model="claude-sonnet-4-5",
             max_tokens=200,
             messages=[{"role": "user", "content": (
                 f"Journal VAO de la semaine :\n{journal_text}\n\n"
@@ -764,7 +764,7 @@ async def weekly_summary():
     )
     try:
         resp    = client.messages.create(
-            model="claude-opus-4-5", max_tokens=1200,
+            model="claude-sonnet-4-5", max_tokens=1200,
             messages=[{"role": "user", "content": prompt}]
         )
         summary = resp.content[0].text
@@ -1061,13 +1061,14 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await safe_reply(update, "⚠️ Format non supporté. Envoie un PDF ou un fichier texte (.txt).", markdown=False)
         return
 
-    # Nom de fichier sécurisé
-    raw_name = doc.file_name or f"doc_{doc.file_id}.pdf"
+    # Nom de fichier sécurisé — on préserve l'extension réelle
+    default_ext = ".pdf" if "pdf" in mime else ".txt"
+    raw_name = doc.file_name or f"doc_{doc.file_id}{default_ext}"
     safe_name = re.sub(r'[^\w\s\-.]', '_', raw_name).strip()
-    if not safe_name.lower().endswith(".pdf"):
-        safe_name += ".pdf"
+    if Path(safe_name).suffix.lower() not in SUPPORTED_EXT:
+        safe_name += default_ext
 
-    dest = Path("/opt/openclaw/docs") / safe_name
+    dest = BASE / "docs" / safe_name
     dest.parent.mkdir(parents=True, exist_ok=True)
 
     await safe_reply(update, f"📥 Réception de *{esc(raw_name)}*…")
@@ -1247,13 +1248,30 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     messages = history + [{"role": "user", "content": user_content}]
 
     try:
-        resp  = client.messages.create(
-            model="claude-opus-4-5",
-            max_tokens=800,
-            system=build_system_prompt(),
+        sys_prompt = build_system_prompt()
+        resp = client.messages.create(
+            model="claude-sonnet-4-5",
+            max_tokens=4096,
+            system=sys_prompt,
             messages=messages,
         )
         reply = resp.content[0].text
+        # Continuation automatique si la réponse a été tronquée
+        loop_msgs = list(messages)
+        guard = 0
+        while resp.stop_reason == "max_tokens" and guard < 4:
+            guard += 1
+            loop_msgs = loop_msgs + [
+                {"role": "assistant", "content": reply},
+                {"role": "user", "content": "Continue."},
+            ]
+            resp = client.messages.create(
+                model="claude-sonnet-4-5",
+                max_tokens=4096,
+                system=sys_prompt,
+                messages=loop_msgs,
+            )
+            reply += resp.content[0].text
     except Exception as e:
         reply = f"Erreur Claude : {e}"
 
