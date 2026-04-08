@@ -347,6 +347,11 @@
   <select id="f-dept"><option value="">Tous les depts</option></select>
   <label class="filter-check"><input type="checkbox" id="f-has-email" /> A un email</label>
   <label class="filter-check"><input type="checkbox" id="f-has-phone" /> A un tél</label>
+  <select id="f-site">
+    <option value="">Site web : tous</option>
+    <option value="yes">Avec site</option>
+    <option value="no">Sans site</option>
+  </select>
   <select id="f-rappel">
     <option value="">Rappels : tous</option>
     <option value="today">Aujourd'hui</option>
@@ -455,7 +460,7 @@ let sortCol      = 'scraped_at';
 let sortAsc      = false;
 let selectedIds  = new Set();
 let debounceTimer = null;
-let filters = { search:'', statut:'', dept:'', assigne:'', rappel:'', hasEmail:false, hasPhone:false };
+let filters = { search:'', statut:'', dept:'', assigne:'', rappel:'', hasEmail:false, hasPhone:false, site:'' };
 
 // ── AUTH ──
 function showLogin() {
@@ -516,6 +521,8 @@ function buildQuery() {
   if (filters.assigne)   q = q.eq('assigne_a', filters.assigne);
   if (filters.hasEmail)  q = q.not('email', 'is', null);
   if (filters.hasPhone)  q = q.not('phone', 'is', null);
+  if (filters.site === 'yes') q = q.not('website', 'is', null).neq('website', '');
+  if (filters.site === 'no')  q = q.or('website.is.null,website.eq.');
   if (filters.rappel === 'today')    q = q.eq('rappel_le', TODAY);
   if (filters.rappel === 'overdue')  q = q.lt('rappel_le', TODAY).not('rappel_le', 'is', null);
   if (filters.rappel === 'upcoming') {
@@ -831,9 +838,9 @@ async function loadFilterOptions() {
 }
 
 function resetFilters() {
-  filters = { search:'', statut:'', dept:'', assigne:'', rappel:'', hasEmail:false, hasPhone:false };
+  filters = { search:'', statut:'', dept:'', assigne:'', rappel:'', hasEmail:false, hasPhone:false, site:'' };
   document.getElementById('search').value = '';
-  ['f-statut','f-dept','f-assigne','f-rappel'].forEach(id => document.getElementById(id).value='');
+  ['f-statut','f-dept','f-assigne','f-rappel','f-site'].forEach(id => document.getElementById(id).value='');
   document.getElementById('f-has-email').checked = false;
   document.getElementById('f-has-phone').checked = false;
   currentPage = 0; loadPage();
@@ -851,7 +858,7 @@ document.getElementById('search').addEventListener('input', e => {
   clearTimeout(debounceTimer);
   debounceTimer = setTimeout(() => { filters.search=e.target.value; currentPage=0; loadPage(); }, 400);
 });
-[['f-statut','statut'],['f-dept','dept'],['f-assigne','assigne'],['f-rappel','rappel']].forEach(([id,key]) => {
+[['f-statut','statut'],['f-dept','dept'],['f-assigne','assigne'],['f-rappel','rappel'],['f-site','site']].forEach(([id,key]) => {
   document.getElementById(id).addEventListener('change', e => { filters[key]=e.target.value; currentPage=0; loadPage(); });
 });
 document.getElementById('f-has-email').addEventListener('change', e => { filters.hasEmail=e.target.checked; currentPage=0; loadPage(); });

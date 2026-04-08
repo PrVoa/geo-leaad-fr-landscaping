@@ -41,6 +41,10 @@ API_VAO_URL  = os.getenv("API_VAO_URL", "https://178-104-104-36.sslip.io")
 
 client   = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
 CHAT_IDS = [c for c in [CHAT_ID_1, CHAT_ID_2] if c]
+CHAT_NAMES = {CHAT_ID_1: "Quentin", CHAT_ID_2: "Laurie"}
+
+def name_for(cid: str) -> str:
+    return CHAT_NAMES.get(cid, "")
 
 awaiting_journal: set[str] = set()
 # Tâches proposées en attente de validation : chat_id -> list[dict]
@@ -944,28 +948,13 @@ async def morning_brief():
     paris     = now_paris()
     today_str = paris.strftime("%d/%m/%Y")
 
-    # Agents actifs
-    agent_lines = []
-    for name, p in running_procs.items():
-        st = "🟢 actif" if p.poll() is None else "🔴 arrêté"
-        agent_lines.append(f"  • {name} : {st}")
-    if not agent_lines:
-        agent_lines.append("  • Aucun agent actif")
-
-    # Stats VAO + refresh business
+    # Refresh business + alertes proactives (sans afficher les stats brutes)
     stats = get_vao_stats()
     refresh_business()
-
     if "error" not in stats:
-        leads     = stats.get("total_leads", stats.get("leads", "?"))
-        nouveaux  = stats.get("repartition_statut", {}).get("nouveau", "?")
-        contactes = stats.get("repartition_statut", {}).get("contacte", "?")
-        offres    = stats.get("repartition_statut", {}).get("offre_envoyee", "?")
-        stats_line = f"Leads : {leads} | Nouveaux : {nouveaux} | Contactés : {contactes} | Offres : {offres}"
-    else:
-        stats_line = f"API indisponible ({stats['error']})"
+        await check_proactive_alerts(stats)
 
-    # Rappels Supabase
+    # Rappels Supabase du jour — seul vrai contenu pertinent
     rappels_lines: list[str] = []
     if SUPABASE_URL and SUPABASE_KEY:
         try:
@@ -983,59 +972,26 @@ async def morning_brief():
                     tel = row.get("telephone") or ""
                     label = nom + (f" ({ent})" if ent else "") + (f" — {tel}" if tel else "")
                     rappels_lines.append(f"  • {label}")
-            elif r.status_code == 400:
-                rappels_lines.append("  • Table campaign_leads : schéma à configurer")
-            else:
-                rappels_lines.append(f"  • Erreur Supabase HTTP {r.status_code}")
-        except Exception as e:
-            rappels_lines.append(f"  • Erreur Supabase : {e}")
-    else:
-        rappels_lines.append("  • Supabase non configuré")
+        except Exception:
+            pass
 
-    rappels_text = "\n".join(rappels_lines) or "  • Aucun rappel"
+    # Si rien à dire → pas de brief
+    if not rappels_lines:
+        return
 
-    # Objectif du jour via Claude
-    journal      = load_json(JOURNAL_FILE, [])
-    cutoff       = now_utc() - datetime.timedelta(days=7)
-    recent       = [e for e in journal if datetime.datetime.fromisoformat(e["date"]) > cutoff]
-    journal_text = "\n".join(
-        f"- [{e['date'][:10]}] {e.get('auteur', e.get('author_name','?'))}: {e.get('contenu', e.get('content',''))}"
-        for e in recent
-    ) or "Aucune entrée cette semaine."
-
-    try:
-        resp = client.messages.create(
-            model="claude-sonnet-4-5",
-            max_tokens=200,
-            messages=[{"role": "user", "content": (
-                f"Journal VAO de la semaine :\n{journal_text}\n\n"
-                f"Stats : {stats_line}\n\n"
-                "En une phrase courte et motivante, génère l'objectif prioritaire du jour "
-                "pour le projet VAO. Direct, actionnable, en français."
-            )}],
-        )
-        objectif = resp.content[0].text.strip()
-    except Exception as e:
-        objectif = f"(Erreur Claude : {e})"
-
-    # Alertes proactives en même temps que le brief
-    if "error" not in stats:
-        await check_proactive_alerts(stats)
-
-    msg = (
-        f"🌅 *Bonjour Quentin ! Brief VAO du {today_str}*\n\n"
-        f"*Agents :*\n" + "\n".join(agent_lines) + "\n\n"
-        f"📊 {stats_line}\n\n"
-        f"*Rappels du jour :*\n{rappels_text}\n\n"
-        f"🎯 *Objectif du jour :* {objectif}"
-    )
-    await broadcast(msg)
+    rappels_text = "\n".join(rappels_lines)
+    for cid in CHAT_IDS:
+        prenom = name_for(cid)
+        salut  = f"🌅 *Bonjour {prenom} — Brief VAO du {today_str}*" if prenom else f"🌅 *Brief VAO du {today_str}*"
+        msg = f"{salut}\n\n*Rappels du jour :*\n{rappels_text}"
+        await send(cid, msg)
 
 
 async def daily_checkin():
     for cid in CHAT_IDS:
         awaiting_journal.add(cid)
-        await send(cid, "Bonsoir Quentin ! Qu'est-ce que t'as fait aujourd'hui sur VAO ?")
+        prenom = name_for(cid) or ""
+        await send(cid, f"Bonsoir {prenom} ! Qu'est-ce que t'as fait aujourd'hui sur VAO ?".replace("  ", " "))
 
 
 async def weekly_summary():
