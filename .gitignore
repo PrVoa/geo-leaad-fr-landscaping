@@ -212,3 +212,6 @@ openclaw/memory/
 openclaw/logs/
 openclaw/docs/
 openclaw/.env
+
+# logs (rotation, runtime)
+logs/*.log*
