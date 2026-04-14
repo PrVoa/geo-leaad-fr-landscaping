@@ -1,10 +1,41 @@
-import os, json, asyncio, datetime, subprocess, shutil, requests, re
+import json, asyncio, datetime, subprocess, shutil, requests, re, time
 from pathlib import Path
 from collections import deque
-from dotenv import load_dotenv
-import anthropic
-from telegram import Bot, Update
-from telegram.ext import Application, MessageHandler, CommandHandler, filters, ContextTypes
+import resend
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram.ext import (
+    Application, MessageHandler, CommandHandler, CallbackQueryHandler,
+    filters, ContextTypes,
+)
+
+from core.shared import (
+    bot,
+    anthropic_client,
+    BOT_TOKEN,
+    CHAT_IDS,
+    now_utc,
+    now_paris,
+    load_json,
+    save_json,
+    send,
+    broadcast,
+    safe_reply,
+    authorized,
+    strip_markdown,
+)
+from config import (
+    BASE,
+    JOURNAL_FILE, ALERT_FILE, KB_FILE, LONG_TERM_FILE, BUSINESS_FILE, COSTS_FILE,
+    HISTORY_FILE,
+    EXTRACT_DAILY_LIMIT, TOKEN_DAILY_LIMIT, HISTORY_LIMIT,
+    CHECKIN_DELAY_AFTER_LAST, CHECKIN_HARD_DEADLINE,
+    API_VAO_URL, API_VAO_KEY,
+    SUPABASE_URL, SUPABASE_KEY,
+    SUPABASE_LOVABLE_URL, SUPABASE_LOVABLE_KEY,
+    RESEND_API_KEY, RESEND_FROM, QUENTIN_EMAIL,
+    FOUNDERS, founder_name,
+    BOT_NAME, BOT_SUPABASE_AUTHOR,
+)
 from autonomous_loop import (
     autonomous_loop_tick,
     daily_autonomous_report,
@@ -13,70 +44,37 @@ from autonomous_loop import (
     cmd_plan,
     _record_stage_started,
 )
+from crm_watcher import start_crm_watcher
 
-load_dotenv("/opt/openclaw/.env")
+resend.api_key = RESEND_API_KEY
 
-BASE           = Path("/opt/openclaw")
-JOURNAL_FILE   = BASE / "memory/journal.json"
-ALERT_FILE     = BASE / "memory/alert_state.json"
-KB_FILE        = BASE / "memory/knowledge_base.json"
-LONG_TERM_FILE = BASE / "memory/long_term.json"
-BUSINESS_FILE  = BASE / "memory/business.json"
-COSTS_FILE     = BASE / "memory/costs.json"
+# Diagnostic au démarrage : présence des credentials Resend
+print(
+    f"[email] Config Resend — "
+    f"RESEND_API_KEY={'OK (' + str(len(RESEND_API_KEY)) + ' chars)' if RESEND_API_KEY else 'MANQUANT'} | "
+    f"QUENTIN_EMAIL={QUENTIN_EMAIL or 'MANQUANT'} | "
+    f"RESEND_FROM={RESEND_FROM}"
+)
 
-EXTRACT_DAILY_LIMIT  = 20       # extractions max par jour
-TOKEN_DAILY_LIMIT    = 100_000  # tokens/jour au-delà desquels on coupe extract
-
-SUPABASE_URL = os.getenv("SUPABASE_URL", "")
-SUPABASE_KEY = os.getenv("SUPABASE_KEY", "") or os.getenv("SUPABASE_ANON_KEY", "")
-
-# Supabase Lovable — écriture des tâches (CroustyLobster Trello)
-SUPABASE_LOVABLE_URL = os.getenv("SUPABASE_LOVABLE_URL", "https://jttkqccknmbattmebqnu.supabase.co")
-SUPABASE_LOVABLE_KEY = os.getenv("SUPABASE_LOVABLE_SERVICE_KEY", "")
-BOT_TOKEN    = os.getenv("TELEGRAM_BOT_TOKEN")
-CHAT_ID_1    = os.getenv("TELEGRAM_CHAT_ID_1")
-CHAT_ID_2    = os.getenv("TELEGRAM_CHAT_ID_2")
-API_VAO_KEY  = os.getenv("API_VAO_KEY", "")
-API_VAO_URL  = os.getenv("API_VAO_URL", "https://178-104-104-36.sslip.io")
-
-client   = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
-CHAT_IDS = [c for c in [CHAT_ID_1, CHAT_ID_2] if c]
-CHAT_NAMES = {CHAT_ID_1: "Quentin", CHAT_ID_2: "Laurie"}
-
-def name_for(cid: str) -> str:
-    return CHAT_NAMES.get(cid, "")
+client = anthropic_client()
 
 awaiting_journal: set[str] = set()
-# Tâches proposées en attente de validation : chat_id -> list[dict]
-pending_tasks: dict[str, list[dict]] = {}
 running_procs: dict[str, subprocess.Popen] = {}
 
-# Fenêtre glissante 20 messages par chat_id
+# État du check-in du jour — journal consolidé après délai (voir scheduler_loop)
+# {
+#   "date": "YYYY-MM-DD",
+#   "sent_at": iso,
+#   "responses": {chat_id: {"author": ..., "text": ..., "analyse": ..., "received_at": iso}},
+#   "consolidated": False,
+# }
+checkin_state: dict | None = None
+
+# Fenêtre glissante par chat_id
 conv_history: dict[str, deque] = {}
-HISTORY_LIMIT = 20
 
-
-# ─── HELPERS ──────────────────────────────────────────────────────────────────
-
-def now_utc() -> datetime.datetime:
-    return datetime.datetime.now(datetime.timezone.utc)
-
-def now_paris() -> datetime.datetime:
-    return now_utc().astimezone(datetime.timezone(datetime.timedelta(hours=2)))
-
-def load_json(path: Path, default):
-    if path.exists():
-        try:
-            with open(path, encoding="utf-8") as f:
-                return json.load(f)
-        except Exception:
-            pass
-    return default
-
-def save_json(path: Path, data):
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with open(path, "w", encoding="utf-8") as f:
-        json.dump(data, f, indent=2, ensure_ascii=False)
+# Alias historique : toutes les ancres `esc(...)` du fichier mappent sur strip_markdown.
+esc = strip_markdown
 
 def default_long_term() -> dict:
     return {
@@ -88,7 +86,6 @@ def default_long_term() -> dict:
             "stack": "FastAPI + Supabase + Hetzner",
             "leads_total_initial": 21000,
         },
-        "cours_chunks": [],
     }
 
 def default_business() -> dict:
@@ -206,16 +203,27 @@ def append_journal(author_id: str, author_name: str, content: str, analyse: str 
 
 # ─── VAO API ──────────────────────────────────────────────────────────────────
 
+_vao_stats_cache: tuple[float, dict] | None = None
+_VAO_STATS_TTL = 300  # 5 min — l'API se rafraîchit à l'heure, mais on garde du grain pour /stats
+
 def get_vao_stats() -> dict:
+    global _vao_stats_cache
+    now = time.monotonic()
+    if _vao_stats_cache and now - _vao_stats_cache[0] < _VAO_STATS_TTL:
+        return _vao_stats_cache[1]
     try:
         r = requests.get(
             f"{API_VAO_URL}/stats",
             headers={"X-API-Key": API_VAO_KEY},
             timeout=10,
         )
-        return r.json() if r.status_code == 200 else {"error": f"HTTP {r.status_code}"}
+        result = r.json() if r.status_code == 200 else {"error": f"HTTP {r.status_code}"}
     except Exception as e:
-        return {"error": str(e)}
+        result = {"error": str(e)}
+    # On ne cache pas les erreurs (sinon une indispo bloque tout pendant 5 min)
+    if "error" not in result:
+        _vao_stats_cache = (now, result)
+    return result
 
 def get_disk_pct() -> float:
     total, used, _ = shutil.disk_usage("/")
@@ -282,7 +290,15 @@ def search_kb(query: str, top_k: int = 3) -> list[str]:
 
 # ─── SYSTEM PROMPT ENRICHI ────────────────────────────────────────────────────
 
+_sys_prompt_cache: tuple[float, str] | None = None
+_SYS_PROMPT_TTL = 60  # secondes — recharge KB/long_term/business au max 1×/min
+
 def build_system_prompt() -> str:
+    global _sys_prompt_cache
+    mono = time.monotonic()
+    if _sys_prompt_cache and mono - _sys_prompt_cache[0] < _SYS_PROMPT_TTL:
+        return _sys_prompt_cache[1]
+
     base = (BASE / "system_prompt.txt").read_text(encoding="utf-8")
 
     lt       = load_long_term()
@@ -344,7 +360,9 @@ def build_system_prompt() -> str:
             src = chunk.get("source", "?")
             parts.append(f"  [{src}] {chunk.get('content','')[:300]}")
 
-    return "\n".join(parts)
+    result = "\n".join(parts)
+    _sys_prompt_cache = (mono, result)
+    return result
 
 
 # ─── HISTORIQUE DE CONVERSATION ───────────────────────────────────────────────
@@ -354,25 +372,92 @@ def get_history(chat_id: str) -> list[dict]:
         conv_history[chat_id] = deque(maxlen=HISTORY_LIMIT)
     return list(conv_history[chat_id])
 
+
+_history_save_pending = False   # coalesce : on écrit au max 1×/5s pendant une rafale
+
+
+def _save_history_to_disk():
+    """Sérialise conv_history dans HISTORY_FILE. Appelé en arrière-plan."""
+    data = {cid: list(dq) for cid, dq in conv_history.items()}
+    try:
+        save_json(HISTORY_FILE, data)
+    except Exception as e:
+        print(f"[history] Erreur sauvegarde : {e}")
+
+
+async def _debounced_save_history():
+    global _history_save_pending
+    if _history_save_pending:
+        return
+    _history_save_pending = True
+    try:
+        await asyncio.sleep(5)
+        await asyncio.to_thread(_save_history_to_disk)
+    finally:
+        _history_save_pending = False
+
+
 def add_to_history(chat_id: str, role: str, content: str):
     if chat_id not in conv_history:
         conv_history[chat_id] = deque(maxlen=HISTORY_LIMIT)
     conv_history[chat_id].append({"role": role, "content": content})
+    # Persistance disque, coalescée pour éviter d'écrire à chaque message.
+    try:
+        asyncio.get_event_loop().create_task(_debounced_save_history())
+    except RuntimeError:
+        # Pas de loop active (ex: import time) — on ignore, sera sauvé au prochain ajout.
+        pass
+
+
+def load_history_from_disk():
+    """Restaure conv_history depuis HISTORY_FILE au démarrage."""
+    try:
+        data = load_json(HISTORY_FILE, {})
+    except Exception as e:
+        print(f"[history] Erreur chargement : {e}")
+        return
+    restored = 0
+    for cid, msgs in (data or {}).items():
+        dq = deque(maxlen=HISTORY_LIMIT)
+        for m in msgs[-HISTORY_LIMIT:]:
+            if isinstance(m, dict) and "role" in m and "content" in m:
+                dq.append(m)
+        conv_history[cid] = dq
+        restored += len(dq)
+    if restored:
+        print(f"[history] {restored} messages restaurés pour {len(conv_history)} chat(s)")
 
 
 # ─── EXTRACTION MÉMOIRE ───────────────────────────────────────────────────────
 
+_extract_cap_last_log = 0.0   # throttle du log "cap atteint" (1 fois / heure)
+
+
 async def extract_and_save_memory(user_text: str, ai_response: str):
     """
     Appel Haiku léger pour extraire décisions/apprentissages/erreurs.
-    Garde-fous : message > 50 mots, max 20 extractions/jour, max 100k tokens/jour.
+    Garde-fous : message > 50 mots, cap journalier (EXTRACT_DAILY_LIMIT),
+    cap tokens (TOKEN_DAILY_LIMIT).
     """
+    global _extract_cap_last_log
+
     # Garde-fou 1 : message trop court → pas d'extraction
     if len(user_text.split()) < 50:
         return
 
     # Garde-fou 2 : limites journalières atteintes
     if not can_extract():
+        # Log throttlé : 1 ligne / heure max pour signaler qu'on sature.
+        now = time.monotonic()
+        if now - _extract_cap_last_log > 3600:
+            costs = load_costs()
+            print(
+                f"[memory_extract] Cap atteint — "
+                f"{costs.get('extractions_today', 0)}/{EXTRACT_DAILY_LIMIT} extractions, "
+                f"{costs.get('tokens_today', 0):,}/{TOKEN_DAILY_LIMIT:,} tokens. "
+                f"Extractions skip jusqu'à minuit UTC."
+            )
+            _extract_cap_last_log = now
         return
 
     prompt = (
@@ -405,8 +490,9 @@ async def extract_and_save_memory(user_text: str, ai_response: str):
             for item in extracted.get(category, []):
                 if item and len(item) > 10:
                     add_to_long_term(category, item)
-    except Exception:
-        pass  # extraction silencieuse — ne bloque jamais la conversation
+    except Exception as e:
+        # Ne jamais bloquer la conversation, mais laisser une trace pour debug.
+        print(f"[memory_extract] Erreur : {type(e).__name__}: {e}")
 
 
 # ─── ANALYSE CHECK-IN ─────────────────────────────────────────────────────────
@@ -428,7 +514,7 @@ async def analyze_checkin(author_name: str, content: str) -> str:
     )
     try:
         resp = client.messages.create(
-            model="claude-sonnet-4-5",
+            model="claude-haiku-4-5-20251001",
             max_tokens=200,
             system=build_system_prompt(),
             messages=[{"role": "user", "content": prompt}],
@@ -438,367 +524,7 @@ async def analyze_checkin(author_name: str, content: str) -> str:
         return f"(Analyse impossible : {e})"
 
 
-# ─── PROPOSITION DE TÂCHES POUR DEMAIN ────────────────────────────────────────
-
-VALID_TAGS = {"Prospection", "Dev", "Scraping", "Admin"}
-VALID_ASSIGNEES = {"Quentin", "Laurie"}
-
-async def propose_tasks_for_tomorrow(author_name: str, content: str, analyse: str) -> list[dict]:
-    """Demande à Claude 2-3 tâches concrètes pour demain. Retourne une liste de dicts."""
-    prompt = (
-        f"{author_name} vient de faire son check-in du soir sur le projet VAO :\n"
-        f"\"{content}\"\n\n"
-        f"Analyse : {analyse}\n\n"
-        "Propose 2 ou 3 tâches CONCRÈTES pour demain, basées sur ce qui a été dit. "
-        "Réponds STRICTEMENT en JSON (aucun texte autour) avec ce format :\n"
-        '{"tasks": [{"title": "...", "tag": "Prospection|Dev|Scraping|Admin", '
-        '"assigned_to": "Quentin|Laurie"}]}\n'
-        "Règles : titres courts et actionnables, tag obligatoire parmi la liste, "
-        "assigned_to selon le contexte (Quentin = dev/scraping/tech, Laurie = prospection/admin/commercial)."
-    )
-    try:
-        resp = client.messages.create(
-            model="claude-sonnet-4-5",
-            max_tokens=600,
-            messages=[{"role": "user", "content": prompt}],
-        )
-        raw = resp.content[0].text.strip()
-        m = re.search(r'\{.*\}', raw, re.DOTALL)
-        data = json.loads(m.group(0) if m else raw)
-        tasks = data.get("tasks", [])[:3]
-        cleaned = []
-        for t in tasks:
-            title = (t.get("title") or "").strip()
-            tag = t.get("tag", "Admin")
-            if tag not in VALID_TAGS:
-                tag = "Admin"
-            assigned = t.get("assigned_to", "Quentin")
-            if assigned not in VALID_ASSIGNEES:
-                assigned = "Quentin"
-            if title:
-                cleaned.append({"title": title, "tag": tag, "assigned_to": assigned})
-        return cleaned
-    except Exception:
-        return []
-
-
-def format_task_proposal(tasks: list[dict]) -> str:
-    lines = ["Sur la base de ta journée, je te propose ces tâches pour demain :", ""]
-    for i, t in enumerate(tasks, 1):
-        lines.append(f"{i}. {t['title']} — {t['tag']} — assigné à {t['assigned_to']}")
-    lines.append("")
-    lines.append("Je les ajoute dans le Trello ? (oui / modifier / non)")
-    return "\n".join(lines)
-
-
-# ─── SUPABASE TASKS ───────────────────────────────────────────────────────────
-
-def _supabase_headers() -> dict:
-    """Headers pour le Supabase Lovable (écriture des tâches)."""
-    return {
-        "apikey": SUPABASE_LOVABLE_KEY,
-        "Authorization": f"Bearer {SUPABASE_LOVABLE_KEY}",
-        "Content-Type": "application/json",
-        "Prefer": "return=representation",
-    }
-
-
-def _title_prefix(title: str) -> str:
-    """4 premiers mots normalisés, pour comparaison souple."""
-    words = re.findall(r'\w+', title.lower())
-    return " ".join(words[:4])
-
-
-async def _find_existing_task(http, title: str) -> dict | None:
-    """
-    Cherche un doublon dans Supabase :
-    - 4 premiers mots du titre identiques
-    - status != "done" → bloque
-    - status == "done" et < 7j → bloque ; > 7j → recréable
-    """
-    try:
-        prefix = _title_prefix(title)
-        if not prefix:
-            return None
-        first_word = prefix.split()[0]
-        url = f"{SUPABASE_LOVABLE_URL}/rest/v1/tasks"
-        params = {
-            "select": "id,title,status,created_at",
-            "title": f"ilike.{first_word}%",
-            "order": "created_at.desc",
-            "limit": "50",
-        }
-        r = await http.get(url, headers=_supabase_headers(), params=params)
-        if r.status_code != 200:
-            return None
-        rows = r.json() or []
-        now = datetime.datetime.utcnow()
-        for row in rows:
-            if _title_prefix(row.get("title", "")) != prefix:
-                continue
-            status = (row.get("status") or "").lower()
-            if status != "done":
-                return row
-            created = row.get("created_at", "")
-            try:
-                dt = datetime.datetime.fromisoformat(created.replace("Z", "+00:00")).replace(tzinfo=None)
-                if (now - dt).days <= 7:
-                    return row
-            except Exception:
-                return row
-        return None
-    except Exception:
-        return None
-
-
-async def insert_tasks_supabase(tasks: list[dict]) -> dict:
-    """
-    Insère les tâches dans Supabase avec dédoublonnage.
-    Retourne {'inserted': [...], 'skipped': [{'title':..., 'status':...}], 'error': str|None}
-    """
-    if not SUPABASE_LOVABLE_URL or not SUPABASE_LOVABLE_KEY:
-        return {"inserted": [], "skipped": [], "error": "Supabase Lovable non configuré (SUPABASE_LOVABLE_URL/SERVICE_KEY)"}
-    try:
-        import httpx
-    except ImportError:
-        return {"inserted": [], "skipped": [], "error": "httpx non installé"}
-
-    now = datetime.datetime.utcnow()
-    tomorrow = (now + datetime.timedelta(days=1)).date().isoformat()
-    inserted, skipped = [], []
-
-    async with httpx.AsyncClient(timeout=15.0) as http:
-        for t in tasks:
-            existing = await _find_existing_task(http, t["title"])
-            if existing:
-                skipped.append({"title": t["title"], "status": existing.get("status", "?")})
-                continue
-            payload = {
-                "title": t["title"],
-                "status": "todo",
-                "assigned_to": t["assigned_to"],
-                "tag": t["tag"],
-                "created_by": "CroustyLobster",
-                "due_date": tomorrow,
-            }
-            try:
-                r = await http.post(
-                    f"{SUPABASE_LOVABLE_URL}/rest/v1/tasks",
-                    headers=_supabase_headers(),
-                    json=payload,
-                )
-                if r.status_code in (200, 201):
-                    inserted.append(t)
-                else:
-                    return {
-                        "inserted": inserted,
-                        "skipped": skipped,
-                        "error": f"Supabase {r.status_code}: {r.text[:200]}",
-                    }
-            except Exception as e:
-                return {"inserted": inserted, "skipped": skipped, "error": str(e)}
-
-    return {"inserted": inserted, "skipped": skipped, "error": None}
-
-
-async def _journal_entry_exists(http, titre: str) -> bool:
-    """Vérifie qu'aucune entrée journal avec ce titre n'existe déjà."""
-    try:
-        r = await http.get(
-            f"{SUPABASE_LOVABLE_URL}/rest/v1/journal",
-            headers=_supabase_headers(),
-            params={"select": "id", "titre": f"eq.{titre}", "limit": "1"},
-        )
-        return r.status_code == 200 and bool(r.json())
-    except Exception:
-        return False
-
-
-async def fill_daily_journal():
-    """
-    Génère un résumé de la journée à partir des check-ins reçus
-    et l'insère dans le journal Lovable. Silencieux (pas de Telegram).
-    """
-    import logging
-    log = logging.getLogger("openclaw.journal")
-
-    paris = now_paris()
-    today = paris.date()
-    today_str = today.isoformat()
-
-    # Récupérer les entrées de journal d'aujourd'hui (depuis 21h Paris)
-    entries = load_json(JOURNAL_FILE, [])
-    todays = []
-    for e in entries:
-        try:
-            dt_utc = datetime.datetime.fromisoformat(e.get("date", "").replace("Z", "+00:00"))
-            dt_paris = dt_utc.astimezone(paris.tzinfo)
-            if dt_paris.date() == today and dt_paris.hour >= 21:
-                todays.append(e)
-        except Exception:
-            continue
-
-    if not todays:
-        log.info("[journal] Aucun check-in aujourd'hui → rien à insérer.")
-        return
-
-    # Générer le résumé via Haiku
-    checkins_text = "\n\n".join(
-        f"[{e.get('auteur','?')}] {e.get('contenu','')}\nAnalyse : {e.get('analyse','')}"
-        for e in todays
-    )
-    prompt = (
-        f"Voici les check-ins du soir reçus aujourd'hui ({today_str}) :\n\n"
-        f"{checkins_text}\n\n"
-        "Génère un résumé structuré de la journée en français, en 4 sections courtes :\n"
-        "1. Ce qui a été fait\n"
-        "2. Décisions prises (si mentionnées)\n"
-        "3. Blocages (si mentionnés)\n"
-        "4. Mood général de la journée\n\n"
-        "Reste factuel, concis, sans préambule."
-    )
-    try:
-        resp = client.messages.create(
-            model="claude-haiku-4-5-20251001",
-            max_tokens=600,
-            messages=[{"role": "user", "content": prompt}],
-        )
-        contenu = resp.content[0].text.strip()
-    except Exception as e:
-        log.warning(f"[journal] Génération résumé échouée : {e}")
-        return
-
-    # Tags selon le contenu
-    tags = []
-    low = contenu.lower()
-    if "décision" in low or "decision" in low:
-        tags.append("Décision")
-    if "appris" in low or "apprentissage" in low or "learning" in low:
-        tags.append("Apprentissage")
-    if "blocage" in low or "bloqué" in low or "problème" in low:
-        tags.append("Blocage")
-
-    # Numéro de semaine ISO + date du lundi
-    iso_year, iso_week, _ = today.isocalendar()
-    monday = today - datetime.timedelta(days=today.weekday())
-    semaine = f"Semaine {iso_week} - {monday.isoformat()}"
-
-    titre = f"Journée du {today_str}"
-    payload = {
-        "titre": titre,
-        "contenu": contenu,
-        "tags": tags,
-        "semaine": semaine,
-        "auteur": "CroustyLobster",
-    }
-
-    if not SUPABASE_LOVABLE_URL or not SUPABASE_LOVABLE_KEY:
-        log.warning("[journal] Supabase Lovable non configuré.")
-        return
-
-    try:
-        import httpx
-    except ImportError:
-        log.warning("[journal] httpx non installé.")
-        return
-
-    try:
-        async with httpx.AsyncClient(timeout=15.0) as http:
-            if await _journal_entry_exists(http, titre):
-                log.info(f"[journal] Entrée « {titre} » déjà présente → skip.")
-                return
-            r = await http.post(
-                f"{SUPABASE_LOVABLE_URL}/rest/v1/journal",
-                headers=_supabase_headers(),
-                json=payload,
-            )
-            if r.status_code in (200, 201):
-                log.info(f"[journal] Entrée « {titre} » insérée.")
-            else:
-                log.warning(f"[journal] Insertion KO {r.status_code}: {r.text[:200]}")
-    except Exception as e:
-        log.warning(f"[journal] Exception insertion : {e}")
-
-
-def format_insertion_result(result: dict) -> str:
-    if result.get("error"):
-        return f"❌ Erreur Supabase : {result['error']}"
-    inserted = result.get("inserted", [])
-    skipped = result.get("skipped", [])
-    lines = [f"Ajouté dans le Trello : {len(inserted)} nouvelle(s) tâche(s)"]
-    if inserted:
-        counts: dict[str, int] = {}
-        for t in inserted:
-            counts[t["assigned_to"]] = counts.get(t["assigned_to"], 0) + 1
-        for who, n in counts.items():
-            lines.append(f"  • {who} : {n} tâche(s) pour demain")
-    if skipped:
-        lines.append(f"\nIgnoré (déjà existant) : {len(skipped)} tâche(s)")
-        for s in skipped:
-            lines.append(f"  • « {s['title']} » existe déjà (statut : {s['status']})")
-    return "\n".join(lines)
-
-
-# ─── TELEGRAM ─────────────────────────────────────────────────────────────────
-
-TG_MAX = 4096  # limite Telegram par message
-
-def _split_text(text: str, limit: int = TG_MAX) -> list[str]:
-    """
-    Découpe un texte en morceaux de `limit` caractères max.
-    Coupe sur les sauts de ligne quand possible pour ne pas casser le formatage.
-    """
-    if len(text) <= limit:
-        return [text]
-
-    parts = []
-    while text:
-        if len(text) <= limit:
-            parts.append(text)
-            break
-        # Cherche le dernier \n avant la limite
-        cut = text.rfind("\n", 0, limit)
-        if cut <= 0:
-            cut = limit  # pas de \n → coupe brut
-        parts.append(text[:cut])
-        text = text[cut:].lstrip("\n")
-
-    return parts
-
-
-async def send(chat_id: str, text: str):
-    bot = Bot(token=BOT_TOKEN)
-    for i, part in enumerate(_split_text(text)):
-        try:
-            await bot.send_message(chat_id=chat_id, text=part, parse_mode="Markdown")
-        except Exception:
-            clean = re.sub(r'[*_`\[\]]', '', part)
-            try:
-                await bot.send_message(chat_id=chat_id, text=clean)
-            except Exception:
-                pass
-
-async def broadcast(text: str):
-    for cid in CHAT_IDS:
-        await send(cid, text)
-
-def authorized(update: Update) -> bool:
-    return str(update.effective_chat.id) in CHAT_IDS
-
-def esc(s: str) -> str:
-    return re.sub(r'[*_`\[\]]', '', str(s))
-
-async def safe_reply(update: Update, text: str, markdown: bool = True):
-    for part in _split_text(text):
-        if markdown:
-            try:
-                await update.message.reply_text(part, parse_mode="Markdown")
-                continue
-            except Exception:
-                pass
-        clean = re.sub(r'[*_`\[\]\\]', '', part)
-        await update.message.reply_text(clean)
-
+# ─── DIVERS ───────────────────────────────────────────────────────────────────
 
 def tail_logs(n: int = 20) -> str:
     log = Path("/opt/geo-leaad-fr-landscaping/logs/app.log")
@@ -809,6 +535,243 @@ def tail_logs(n: int = 20) -> str:
         return r.stdout or "Log vide."
     except Exception as e:
         return f"Erreur : {e}"
+
+
+# ─── SUPABASE LOVABLE — TÂCHES ───────────────────────────────────────────────
+
+def _supabase_lovable_headers() -> dict:
+    return {
+        "apikey": SUPABASE_LOVABLE_KEY,
+        "Authorization": f"Bearer {SUPABASE_LOVABLE_KEY}",
+        "Content-Type": "application/json",
+        "Prefer": "return=representation",
+    }
+
+
+async def insert_journal_supabase(
+    titre: str,
+    contenu: str,
+    tags: list[str] | None = None,
+    auteur: str = BOT_SUPABASE_AUTHOR,
+) -> dict:
+    """
+    Insère une entrée dans la table `journal` du Supabase Lovable (dashboard VAO).
+    Anti-doublon : si une entrée avec le même titre existe déjà aujourd'hui,
+    on ne ré-insère pas (retourne {ok: True, skipped: True, id: existing_id}).
+
+    Colonnes écrites : titre, contenu, auteur, semaine, tags.
+    `created_at` est rempli automatiquement par Postgres.
+    """
+    if not SUPABASE_LOVABLE_URL or not SUPABASE_LOVABLE_KEY:
+        return {"ok": False, "error": "Supabase Lovable non configuré"}
+    try:
+        import httpx
+    except ImportError:
+        return {"ok": False, "error": "httpx non installé"}
+
+    today    = datetime.date.today()
+    iso      = today.isocalendar()
+    # Format attendu par le dashboard Lovable : "YYYY-Sww" (ex "2026-S15")
+    semaine  = f"{iso.year}-S{iso.week:02d}"
+    today_iso = today.isoformat()
+    headers  = _supabase_lovable_headers()
+
+    async with httpx.AsyncClient(timeout=15.0) as http:
+        # 1. Anti-doublon : titre identique sur la journée courante
+        try:
+            check = await http.get(
+                f"{SUPABASE_LOVABLE_URL}/rest/v1/journal",
+                headers=headers,
+                params={
+                    "titre":      f"eq.{titre}",
+                    "created_at": f"gte.{today_iso}",
+                    "select":     "id",
+                    "limit":      "1",
+                },
+            )
+            if check.status_code == 200 and check.json():
+                existing_id = check.json()[0].get("id")
+                print(f"[journal] Doublon détecté ({titre!r}) — id existant: {existing_id}")
+                return {"ok": True, "id": existing_id, "skipped": True}
+        except Exception as e:
+            # Non-bloquant : on tente l'insert quand même
+            print(f"[journal] Anti-doublon GET échoué : {e}")
+
+        # 2. Insertion
+        payload = {
+            "titre":   titre,
+            "contenu": contenu,
+            "auteur":  auteur,
+            "semaine": semaine,
+            "tags":    tags or [],
+        }
+        print(f"[journal] Tentative insertion : titre={titre!r} semaine={semaine} tags={tags or []}")
+        try:
+            r = await http.post(
+                f"{SUPABASE_LOVABLE_URL}/rest/v1/journal",
+                headers=headers,
+                json=payload,
+            )
+        except Exception as e:
+            print(f"[journal] Erreur réseau : {e}")
+            return {"ok": False, "error": str(e)}
+
+        if r.status_code in (200, 201):
+            rows = r.json() if r.content else []
+            new_id = rows[0].get("id") if rows else None
+            print(f"[journal] Succès — id={new_id}")
+            return {"ok": True, "id": new_id, "skipped": False}
+
+        err = f"Supabase {r.status_code}: {r.text[:300]}"
+        print(f"[journal] Échec : {err}")
+        return {"ok": False, "error": err}
+
+
+async def insert_tasks_supabase(tasks: list[dict]) -> dict:
+    """Insère des tâches dans Supabase Lovable. Retourne {inserted, skipped, error}."""
+    if not SUPABASE_LOVABLE_URL or not SUPABASE_LOVABLE_KEY:
+        return {"inserted": [], "skipped": [], "error": "Supabase Lovable non configuré"}
+    try:
+        import httpx
+    except ImportError:
+        return {"inserted": [], "skipped": [], "error": "httpx non installé"}
+
+    tomorrow = (datetime.datetime.utcnow() + datetime.timedelta(days=1)).date().isoformat()
+    inserted, skipped = [], []
+
+    async with httpx.AsyncClient(timeout=15.0) as http:
+        for t in tasks:
+            payload = {
+                "title": t["title"],
+                "status": "todo",
+                "assigned_to": t.get("assigned_to", "Quentin"),
+                "tag": t.get("tag", "Admin"),
+                "created_by": BOT_SUPABASE_AUTHOR,
+                "due_date": t.get("due_date") or tomorrow,
+            }
+            try:
+                r = await http.post(
+                    f"{SUPABASE_LOVABLE_URL}/rest/v1/tasks",
+                    headers=_supabase_lovable_headers(),
+                    json=payload,
+                )
+                if r.status_code in (200, 201):
+                    inserted.append(t)
+                else:
+                    return {"inserted": inserted, "skipped": skipped,
+                            "error": f"Supabase {r.status_code}: {r.text[:200]}"}
+            except Exception as e:
+                return {"inserted": inserted, "skipped": skipped, "error": str(e)}
+
+    return {"inserted": inserted, "skipped": skipped, "error": None}
+
+
+# ─── DÉTECTION TÂCHES (Haiku, multi, autonome) ───────────────────────────────
+
+VALID_TAGS = ["Scraping", "Prospection", "Dev", "Admin"]
+
+# Trigger explicite : seule une demande explicite "ajoute une tâche / nouvelle
+# tâche / rajoute / crée une tâche / mets dans le trello" déclenche l'insertion
+# en flow normal. Le check-in du soir et /push restent les autres canaux.
+# Trigger explicite : déclencheurs (verbe) + cible (où ranger).
+# On exige les deux pour éviter les faux positifs sur "ajoute" employé hors-tâche.
+TASK_TRIGGER_VERB_RE = re.compile(
+    r'\b('
+    r'ajoute|rajoute|cr[ée]+e?|cr[ée]er|mets?|met(?:tre|s)?|'
+    r'pousse(?:r|z)?|envoie(?:r|z)?|push(?:e|er)?|'
+    r'enregistre(?:r|z)?|note(?:r|z)?|inscri(?:s|re|t|vez)|'
+    r'nouvelle|nouvelles'
+    r')\b',
+    re.IGNORECASE,
+)
+TASK_TRIGGER_TARGET_RE = re.compile(
+    r'\b('
+    r't[âa]che(?:s)?|action(?:s)?\s+(?:concr[èe]te(?:s)?|à\s+faire)|'
+    r'trello|dashboard|kanban|tableau|board|supabase|lovable|'
+    r'to-?do|todo(?:list)?|liste\s+(?:des\s+)?(?:t[âa]ches|actions|todo)'
+    r')\b',
+    re.IGNORECASE,
+)
+def is_explicit_task_request(text: str) -> bool:
+    return bool(TASK_TRIGGER_VERB_RE.search(text) and TASK_TRIGGER_TARGET_RE.search(text))
+
+# Détection d'une question explicite : "?" ou mot interrogatif clair.
+# Sert à décider si, après ajout d'une tâche, il faut quand même répondre.
+QUESTION_RE = re.compile(
+    r'(\?'
+    r'|\b(pourquoi|comment|quand|combien|qui|quoi|où|ou est|est-?ce que|'
+    r'explique(?:s|z|-moi)?|dis-?moi|peux-?tu|peut-?on|sais-?tu|'
+    r'qu[\'’]est-?ce|quelle?s?)\b)',
+    re.IGNORECASE,
+)
+
+
+async def extract_tasks_list(text: str, is_conversation: bool = False) -> list[dict]:
+    """Haiku extrait UNE OU PLUSIEURS tâches d'un texte (message, réponse ou conversation)."""
+    today = datetime.date.today().isoformat()
+    tomorrow = (datetime.date.today() + datetime.timedelta(days=1)).isoformat()
+    if is_conversation:
+        intro = (
+            f"Tu reçois un extrait de conversation Telegram entre Quentin (le fondateur) "
+            f"et son assistant {BOT_NAME}. Extrait TOUTES les actions concrètes "
+            "discutées ou suggérées que Quentin n'a pas explicitement refusées : "
+            "engagements pris, idées validées, suggestions de l'assistant que "
+            "Quentin a reprises ou n'a pas écartées. Sois généreux : si une action "
+            "est mentionnée comme \"à faire\", \"il faut\", \"je vais\", ou si "
+            "l'assistant propose et Quentin enchaîne sans dire non, c'est une tâche.\n"
+        )
+        label = "Conversation"
+    else:
+        intro = "Extrait toutes les tâches/actions concrètes à faire de ce texte.\n"
+        label = "Texte"
+    prompt = (
+        f"{intro}"
+        f"Date du jour : {today}\n\n"
+        f"{label} :\n\"\"\"\n{text}\n\"\"\"\n\n"
+        "Réponds UNIQUEMENT en JSON valide sans markdown, sous la forme :\n"
+        '{"tasks": [{"title": "...", "assigned_to": "Quentin ou Laurie", '
+        '"tag": "Scraping ou Prospection ou Dev ou Admin", '
+        '"due_date": "YYYY-MM-DD"}]}\n\n'
+        "Règles :\n"
+        "- title : reformule en titre court actionnable (impératif)\n"
+        "- une entrée par action distincte\n"
+        "- assigned_to : Quentin par défaut sauf si Laurie est mentionnée\n"
+        "- tag : déduis du contexte, Admin par défaut\n"
+        f"- due_date : {tomorrow} par défaut sauf si une date est mentionnée\n"
+        "- Si vraiment aucune action concrète : retourne {\"tasks\": []}"
+    )
+    try:
+        resp = client.messages.create(
+            model="claude-haiku-4-5-20251001",
+            max_tokens=600,
+            messages=[{"role": "user", "content": prompt}],
+        )
+        raw = resp.content[0].text.strip()
+        raw = re.sub(r'^```(?:json)?\s*', '', raw)
+        raw = re.sub(r'\s*```$', '', raw)
+        data = json.loads(raw)
+        cleaned = []
+        for t in data.get("tasks", []):
+            if not isinstance(t, dict) or not t.get("title"):
+                continue
+            if t.get("assigned_to") not in ("Quentin", "Laurie"):
+                t["assigned_to"] = "Quentin"
+            if t.get("tag") not in VALID_TAGS:
+                t["tag"] = "Admin"
+            cleaned.append(t)
+        return cleaned
+    except Exception as e:
+        print(f"[task_extract_multi] Erreur : {e}")
+        return []
+
+
+def format_inserted_tasks(inserted: list[dict], header: str) -> str:
+    lines = [header]
+    for t in inserted:
+        lines.append(
+            f"• {t['title']} → {t.get('assigned_to', 'Quentin')} ({t.get('tag', 'Admin')})"
+        )
+    return "\n".join(lines)
 
 
 # ─── TÂCHES PLANIFIÉES ────────────────────────────────────────────────────────
@@ -859,15 +822,19 @@ async def check_crashes():
 
     save_json(ALERT_FILE, alert)
     if problems:
-        await broadcast("⚠️ *Alerte CroustyLobster*\n\n" + "\n".join(problems))
+        await broadcast(f"⚠️ *Alerte {BOT_NAME}*\n\n" + "\n".join(problems))
 
 
 async def check_proactive_alerts(stats: dict):
-    """Analyse autonome : contactés, scraper inactif, trajectoire objectif."""
+    """Analyse autonome : collecte les conditions et laisse Claude formuler le message."""
+    # Pas d'alertes d'inactivité le week-end
+    if now_paris().weekday() >= 5:
+        return
+
     alert = load_json(ALERT_FILE, {})
     now   = now_utc()
     paris = now_paris()
-    problems = []
+    conditions: list[str] = []  # faits bruts à passer à Claude
 
     def should_alert(key: str, hours: int = 24) -> bool:
         last = alert.get(key)
@@ -878,10 +845,8 @@ async def check_proactive_alerts(stats: dict):
     # Aucun lead contacté depuis 7 jours
     statuts = stats.get("repartition_statut", {})
     contactes = statuts.get("contacte", 0)
-    offres    = statuts.get("offre_envoyee", 0)
     leads_total = stats.get("total_leads", stats.get("leads", 0))
 
-    # On vérifie dans le journal si des contacts ont été mentionnés cette semaine
     journal = load_json(JOURNAL_FILE, [])
     cutoff_7d = now - datetime.timedelta(days=7)
     recent_journal = [
@@ -894,9 +859,9 @@ async def check_proactive_alerts(stats: dict):
     )
 
     if not contact_mentions and contactes == 0 and should_alert("no_contact_7d", hours=168):
-        problems.append(
-            f"📭 *Aucun lead contacté cette semaine.*\n"
-            f"Tu as {leads_total} leads en base. Prochaine action ?"
+        conditions.append(
+            f"Aucun lead contacté cette semaine ({leads_total} leads en base, "
+            f"aucune mention de prospection dans le journal)."
         )
         alert["no_contact_7d"] = now.isoformat()
     else:
@@ -906,56 +871,92 @@ async def check_proactive_alerts(stats: dict):
     scraper_proc = running_procs.get("scraper")
     scraper_running = scraper_proc and scraper_proc.poll() is None
     last_scraper = alert.get("last_scraper_active")
+    scraper_silent_h = 0
     if last_scraper:
         last_scraper_dt = datetime.datetime.fromisoformat(last_scraper)
         scraper_silent_h = (now - last_scraper_dt).total_seconds() / 3600
-    else:
-        scraper_silent_h = 0
 
     if scraper_running:
         alert["last_scraper_active"] = now.isoformat()
         alert.pop("scraper_inactive_48h", None)
     else:
-        # Ne pas alerter si le scraper a terminé normalement (exit code 0)
         scraper_exit_code = alert.get("last_scraper_exit_code")
         scraper_finished  = alert.get("last_scraper_finished")
         scraper_ended_ok  = (scraper_finished is not None and scraper_exit_code == 0)
 
         if not scraper_ended_ok and scraper_silent_h > 48 and last_scraper and should_alert("scraper_inactive_48h", hours=24):
-            problems.append(
-                f"🕷️ *Scraper inactif depuis {int(scraper_silent_h)}h.*\n"
-                f"Lance-le avec /start_scraper si nécessaire."
+            conditions.append(
+                f"Scraper inactif depuis {int(scraper_silent_h)}h "
+                f"(commande pour le relancer : /start_scraper)."
             )
             alert["scraper_inactive_48h"] = now.isoformat()
         elif scraper_ended_ok:
             alert.pop("scraper_inactive_48h", None)
 
-    # Trajectoire hebdo : si peu d'entrées journal en milieu de semaine
-    weekday = paris.weekday()  # 0=lundi, 6=dimanche
+    # Trajectoire hebdo : peu d'entrées journal en milieu de semaine
+    weekday = paris.weekday()
     if weekday in (2, 3) and len(recent_journal) < 2 and should_alert("low_activity", hours=48):
-        problems.append(
-            f"📉 *Peu d'activité journalisée cette semaine* ({len(recent_journal)} entrée(s)).\n"
-            f"Objectifs hebdo sur la bonne trajectoire ?"
+        conditions.append(
+            f"Peu d'activité journalisée cette semaine "
+            f"({len(recent_journal)} entrée(s) en {weekday + 1} jour(s))."
         )
         alert["low_activity"] = now.isoformat()
 
     save_json(ALERT_FILE, alert)
-    if problems:
-        await broadcast("🔔 *Analyse proactive VAO*\n\n" + "\n\n".join(problems))
+    if not conditions:
+        return
+
+    # Laisser Claude formuler le message d'alerte (pas de template rigide)
+    facts_block = "\n".join(f"- {c}" for c in conditions)
+    prompt = (
+        "Voici des signaux préoccupants détectés sur le projet VAO aujourd'hui :\n"
+        f"{facts_block}\n\n"
+        "Écris un message direct à Quentin pour l'alerter. "
+        "Pas de mise en forme excessive, pas de titres, pas de listes à puces. "
+        "Va droit au but et challenge si nécessaire."
+    )
+    try:
+        resp = client.messages.create(
+            model="claude-haiku-4-5-20251001",
+            max_tokens=300,
+            system=build_system_prompt(),
+            messages=[{"role": "user", "content": prompt}],
+        )
+        msg = resp.content[0].text.strip()
+    except Exception:
+        # Fallback minimal en cas de pépin Claude
+        msg = "Quelques signaux à regarder :\n" + facts_block
+    await broadcast(msg)
 
 
-async def morning_brief():
+async def _generate_brief_text(trigger_alerts: bool = True, recipient: str = "Quentin") -> str:
+    """Génère le texte du brief matin (pur, sans envoi) adressé à `recipient`.
+    Si trigger_alerts=False, on saute l'envoi d'alertes proactives (utile quand
+    un user force /brief et qu'on ne veut pas broadcaster d'alertes à tout le monde)."""
     paris     = now_paris()
     today_str = paris.strftime("%d/%m/%Y")
 
-    # Refresh business + alertes proactives (sans afficher les stats brutes)
+    # Agents actifs (données brutes)
+    agents_data = []
+    for name, p in running_procs.items():
+        agents_data.append(f"{name}: {'actif' if p.poll() is None else 'arrêté'}")
+    agents_text = ", ".join(agents_data) if agents_data else "aucun agent actif"
+
+    # Stats VAO + refresh business
     stats = get_vao_stats()
     refresh_business()
-    if "error" not in stats:
-        await check_proactive_alerts(stats)
 
-    # Rappels Supabase du jour — seul vrai contenu pertinent
-    rappels_lines: list[str] = []
+    if "error" not in stats:
+        leads     = stats.get("total_leads", stats.get("leads", "?"))
+        nouveaux  = stats.get("repartition_statut", {}).get("nouveau", "?")
+        contactes = stats.get("repartition_statut", {}).get("contacte", "?")
+        offres    = stats.get("repartition_statut", {}).get("offre_envoyee", "?")
+        stats_text = f"leads={leads}, nouveaux={nouveaux}, contactés={contactes}, offres={offres}"
+    else:
+        stats_text = f"API indisponible ({stats['error']})"
+
+    # Rappels Supabase
+    rappels_data: list[str] = []
     if SUPABASE_URL and SUPABASE_KEY:
         try:
             today_iso = paris.date().isoformat()
@@ -971,30 +972,238 @@ async def morning_brief():
                     ent = row.get("entreprise") or ""
                     tel = row.get("telephone") or ""
                     label = nom + (f" ({ent})" if ent else "") + (f" — {tel}" if tel else "")
-                    rappels_lines.append(f"  • {label}")
-        except Exception:
-            pass
+                    rappels_data.append(label)
+        except Exception as e:
+            print(f"[brief] Erreur Supabase rappels : {e}")
+    rappels_text = "; ".join(rappels_data) if rappels_data else "aucun rappel"
 
-    # Si rien à dire → pas de brief
-    if not rappels_lines:
-        return
+    # Journal de la semaine
+    journal      = load_json(JOURNAL_FILE, [])
+    cutoff       = now_utc() - datetime.timedelta(days=7)
+    recent       = [e for e in journal if datetime.datetime.fromisoformat(e["date"]) > cutoff]
+    journal_text = "\n".join(
+        f"- [{e['date'][:10]}] {e.get('auteur', e.get('author_name','?'))}: {e.get('contenu', e.get('content',''))}"
+        for e in recent
+    ) or "aucune entrée cette semaine"
 
-    rappels_text = "\n".join(rappels_lines)
+    # Alertes proactives en même temps que le brief (broadcast → seulement
+    # quand le brief vient du scheduler, pas quand un user clique /brief).
+    if trigger_alerts and "error" not in stats:
+        await check_proactive_alerts(stats)
+
+    # Brief généré par Claude — format libre, adressé nommément au destinataire
+    prompt = (
+        f"On est le {today_str}. Génère le brief matin pour {recipient} sur VAO "
+        f"(tutoie-le/la, commence par le/la saluer par son prénom).\n\n"
+        f"Données disponibles :\n"
+        f"- Agents : {agents_text}\n"
+        f"- Stats VAO : {stats_text}\n"
+        f"- Rappels du jour : {rappels_text}\n"
+        f"- Journal récent :\n{journal_text}\n\n"
+        "Salue-le brièvement, donne l'essentiel, pointe l'objectif prioritaire de la journée. "
+        "Sois direct, naturel, sans titres ni listes à puces forcées."
+    )
+    try:
+        resp = client.messages.create(
+            model="claude-sonnet-4-20250514",
+            max_tokens=400,
+            system=build_system_prompt(),
+            messages=[{"role": "user", "content": prompt}],
+        )
+        return resp.content[0].text.strip()
+    except Exception as e:
+        return f"Brief du {today_str} — agents: {agents_text}. Stats: {stats_text}. (Claude indispo: {e})"
+
+
+async def morning_brief():
+    """Brief matin programmé — un brief personnalisé par fondateur + alertes (une seule fois)."""
+    first = True
     for cid in CHAT_IDS:
-        prenom = name_for(cid)
-        salut  = f"🌅 *Bonjour {prenom} — Brief VAO du {today_str}*" if prenom else f"🌅 *Brief VAO du {today_str}*"
-        msg = f"{salut}\n\n*Rappels du jour :*\n{rappels_text}"
+        name = founder_name(cid)
+        # trigger_alerts seulement sur le premier fondateur pour éviter le double broadcast
+        msg = await _generate_brief_text(trigger_alerts=first, recipient=name)
         await send(cid, msg)
+        first = False
 
 
 async def daily_checkin():
+    """Envoie la question check-in personnalisée à chaque fondateur."""
+    global checkin_state
+    today_iso = now_paris().date().isoformat()
+    checkin_state = {
+        "date":         today_iso,
+        "sent_at":      now_utc().isoformat(),
+        "responses":    {},
+        "consolidated": False,
+    }
     for cid in CHAT_IDS:
+        name = founder_name(cid)
+        try:
+            resp = client.messages.create(
+                model="claude-haiku-4-5-20251001",
+                max_tokens=80,
+                system=build_system_prompt(),
+                messages=[{"role": "user", "content": (
+                    f"C'est l'heure du check-in du soir avec {name}, fondateur de VAO. "
+                    f"Écris-lui UN message court adressé directement à {name} "
+                    f"(commence par le saluer par son prénom) pour lui demander ce qu'il/elle "
+                    f"a fait sur VAO aujourd'hui. Une ou deux phrases, naturel, tutoie-le/la."
+                )}],
+            )
+            question = resp.content[0].text.strip()
+        except Exception:
+            question = f"Bonsoir {name}, qu'est-ce que t'as avancé sur VAO aujourd'hui ?"
+
         awaiting_journal.add(cid)
-        prenom = name_for(cid) or ""
-        await send(cid, f"Bonsoir {prenom} ! Qu'est-ce que t'as fait aujourd'hui sur VAO ?".replace("  ", " "))
+        await send(cid, question)
+
+
+async def expand_founder_update(author: str, raw_text: str) -> str:
+    """
+    Demande à Sonnet de produire un compte-rendu détaillé et fidèle de ce qu'a
+    partagé un fondateur lors du check-in. Le but : capturer toute la richesse
+    sans rien inventer — actions menées, décisions, intentions, blocages,
+    contexte, prochains pas. Format prose, pas de bullets forcés.
+    """
+    if not raw_text or not raw_text.strip():
+        return "(aucune réponse)"
+    prompt = (
+        f"{author} vient de partager ses avancées du jour sur VAO lors du check-in du soir. "
+        f"Voici son message brut :\n\n\"\"\"\n{raw_text}\n\"\"\"\n\n"
+        "Rédige un compte-rendu détaillé et fidèle de ce qu'il a partagé pour le journal "
+        "de bord du dashboard. Capture tout ce qui est dit : actions menées, décisions "
+        "prises, intentions, blocages rencontrés, prochains pas, contexte. Sois exhaustif "
+        "et structuré, sans rien inventer ni broder. Si plusieurs sujets sont abordés, "
+        "structure-les. Prose naturelle, pas de bullets forcés. Reste en troisième personne "
+        "(\"Quentin a fait…\", \"Laurie a décidé…\")."
+    )
+    try:
+        resp = client.messages.create(
+            model="claude-sonnet-4-20250514",
+            max_tokens=1500,
+            system=build_system_prompt(),
+            messages=[{"role": "user", "content": prompt}],
+        )
+        return resp.content[0].text.strip()
+    except Exception as e:
+        print(f"[expand_founder] Erreur Claude : {e}")
+        # Fallback : on retourne au moins le texte brut pour ne rien perdre
+        return raw_text
+
+
+def get_code_updates_today() -> str:
+    """
+    Retourne un résumé court (1-2 lignes) des commits du jour sur le repo
+    geo-leaad-fr-landscaping, ou chaîne vide si rien.
+    """
+    repo = "/opt/geo-leaad-fr-landscaping"
+    try:
+        r = subprocess.run(
+            ["git", "-C", repo, "log",
+             "--since=midnight", "--pretty=format:%s"],
+            capture_output=True, text=True, timeout=5,
+        )
+        commits = [l.strip() for l in r.stdout.splitlines() if l.strip()]
+    except Exception as e:
+        print(f"[code_updates] Erreur git log : {e}")
+        return ""
+    if not commits:
+        return ""
+    n = len(commits)
+    # Une seule ligne factuelle, sans détail technique
+    if n == 1:
+        return f"Côté code aujourd'hui : 1 commit ({commits[0][:120]})."
+    return f"Côté code aujourd'hui : {n} commits — dernier : {commits[0][:120]}."
+
+
+async def consolidate_checkin():
+    """
+    Écrit les réponses du check-in dans le journal local ET dans la table
+    journal du dashboard Supabase Lovable, puis reset l'état.
+    """
+    global checkin_state
+    if not checkin_state or checkin_state.get("consolidated"):
+        return
+    checkin_state["consolidated"] = True
+    responses = checkin_state.get("responses", {})
+
+    if not responses:
+        # Aucune réponse — silencieux, pas d'entrée journal
+        print(f"[checkin] Aucune réponse au check-in du {checkin_state['date']}, journal vide.")
+        return
+
+    # 1. Journal local (memory/journal.json) — une entrée par auteur
+    for cid, r in responses.items():
+        append_journal(cid, r["author"], r["text"], r.get("analyse", ""))
+
+    # 2. Dashboard Supabase Lovable — une entrée consolidée pour la journée
+    # Format daily : avancées des fondateurs DÉTAILLÉES + mention code minimaliste
+    date_iso = checkin_state["date"]
+    auteurs  = sorted({r["author"] for r in responses.values()})
+    contenu_parts = []
+    for r in responses.values():
+        # Demande à Claude un compte-rendu détaillé et fidèle de ce qu'a dit le fondateur
+        detailed = await expand_founder_update(r["author"], r["text"])
+        bloc = f"## {r['author']}\n\n{detailed}"
+        contenu_parts.append(bloc)
+    contenu = "\n\n".join(contenu_parts)
+
+    # Mention code en fin d'entrée si pertinent (1-2 lignes max, pas de détail)
+    code_line = get_code_updates_today()
+    if code_line:
+        contenu += f"\n\n---\n{code_line}"
+
+    titre = f"Check-in du {date_iso}"
+    tags  = ["check-in"] + auteurs
+
+    try:
+        result = await insert_journal_supabase(
+            titre=titre,
+            contenu=contenu,
+            tags=tags,
+            auteur=BOT_SUPABASE_AUTHOR,
+        )
+        if result.get("ok"):
+            if result.get("skipped"):
+                print(f"[checkin] Dashboard : entrée déjà présente (id={result.get('id')})")
+            else:
+                print(f"[checkin] Dashboard : entrée ajoutée (id={result.get('id')})")
+        else:
+            print(f"[checkin] Dashboard : échec insertion — {result.get('error')}")
+    except Exception as e:
+        print(f"[checkin] Dashboard : exception {type(e).__name__}: {e}")
+
+    n = len(responses)
+    plural = "s" if n > 1 else ""
+    await broadcast(
+        f"📒 Journal de la journée enregistré ({n} réponse{plural})."
+    )
+    print(f"[checkin] Journal consolidé pour {checkin_state['date']} ({n} réponse(s)).")
+
+
+def get_code_updates_week() -> str:
+    """Liste les commits de la semaine écoulée sur le repo, format compact."""
+    repo = "/opt/geo-leaad-fr-landscaping"
+    try:
+        r = subprocess.run(
+            ["git", "-C", repo, "log",
+             "--since=7 days ago", "--pretty=format:%ad %s", "--date=short"],
+            capture_output=True, text=True, timeout=5,
+        )
+        commits = [l.strip() for l in r.stdout.splitlines() if l.strip()]
+    except Exception as e:
+        print(f"[code_updates] Erreur git log hebdo : {e}")
+        return "Aucun commit récupéré."
+    if not commits:
+        return "Aucun commit cette semaine."
+    return "\n".join(f"- {c}" for c in commits[:30])
 
 
 async def weekly_summary():
+    """
+    Récap hebdomadaire dominical — détaillé. Pousse une entrée longue dans le
+    journal du dashboard et broadcast un résumé sur Telegram.
+    """
     journal  = load_json(JOURNAL_FILE, [])
     cutoff   = now_utc() - datetime.timedelta(days=7)
     week     = [e for e in journal if datetime.datetime.fromisoformat(e["date"]) > cutoff]
@@ -1002,7 +1211,7 @@ async def weekly_summary():
     business = load_business()
 
     if not week:
-        await broadcast("📋 *Résumé hebdo VAO*\n\nAucune entrée de journal cette semaine.")
+        await broadcast("Aucune entrée de journal cette semaine — pas de récap à faire.")
         return
 
     journal_text = "\n".join(
@@ -1012,29 +1221,146 @@ async def weekly_summary():
     decisions_text = "\n".join(
         f"- {d.get('contenu','')}" for d in lt.get("decisions", [])[-10:]
     ) or "Aucune."
+    apprent_text = "\n".join(
+        f"- {a.get('contenu','')}" for a in lt.get("apprentissages", [])[-10:]
+    ) or "Aucun."
+    erreurs_text = "\n".join(
+        f"- {e.get('contenu','')}" for e in lt.get("erreurs", [])[-10:]
+    ) or "Aucune."
+    code_text = get_code_updates_week()
 
     prompt = (
-        f"Journal de la semaine du projet VAO :\n{journal_text}\n\n"
+        f"Récap hebdomadaire du projet VAO. Aujourd'hui c'est dimanche, on rentre dans le détail.\n\n"
+        f"Journal de la semaine (avancées des fondateurs jour par jour) :\n{journal_text}\n\n"
+        f"Commits de la semaine sur le repo :\n{code_text}\n\n"
         f"Décisions récentes en mémoire :\n{decisions_text}\n\n"
+        f"Apprentissages récents :\n{apprent_text}\n\n"
+        f"Erreurs/frictions identifiées :\n{erreurs_text}\n\n"
         f"Stats actuelles : leads={business.get('leads_total')}, "
         f"statuts={json.dumps(business.get('statuts',{}))}\n\n"
-        "Génère un résumé structuré :\n"
-        "1. **Ce qui a été fait** (bullet points)\n"
-        "2. **Points bloquants identifiés**\n"
-        "3. **Comparaison objectifs vs réalisé**\n"
-        "4. **3 priorités pour la semaine prochaine**\n\n"
-        "Direct, concis, en français."
+        "Rédige un récap hebdo détaillé pour le dashboard. Raconte ce qui s'est "
+        "passé jour par jour côté humain (Quentin, Laurie), puis évoque les changements "
+        "code de manière structurée, puis les décisions prises et les apprentissages. "
+        "Format prose naturelle, pas de bullets forcés sauf quand pertinent. "
+        "Long format autorisé (récap hebdo détaillé)."
     )
     try:
         resp    = client.messages.create(
-            model="claude-sonnet-4-5", max_tokens=1200,
-            messages=[{"role": "user", "content": prompt}]
+            model="claude-sonnet-4-20250514",
+            max_tokens=2000,
+            system=build_system_prompt(),
+            messages=[{"role": "user", "content": prompt}],
         )
-        summary = resp.content[0].text
+        summary = resp.content[0].text.strip()
     except Exception as e:
-        summary = f"Erreur génération : {e}"
+        summary = f"Erreur génération récap hebdo : {e}"
 
-    await broadcast(f"📋 *Résumé hebdo VAO*\n\n{summary}")
+    # Broadcast Telegram
+    await broadcast(summary)
+
+    # Push dans le journal du dashboard avec tag hebdo
+    paris = now_paris()
+    iso = paris.date().isocalendar()
+    titre = f"Récap hebdo {iso.year}-S{iso.week:02d}"
+    try:
+        r = await insert_journal_supabase(
+            titre=titre,
+            contenu=summary,
+            tags=["hebdo", "recap"],
+            auteur=BOT_SUPABASE_AUTHOR,
+        )
+        if r.get("ok"):
+            print(f"[weekly] Récap hebdo poussé dashboard (id={r.get('id')}, skipped={r.get('skipped')})")
+        else:
+            print(f"[weekly] Échec push dashboard : {r.get('error')}")
+    except Exception as e:
+        print(f"[weekly] Exception push dashboard : {e}")
+
+
+def send_email_resend(to: str, subject: str, body: str) -> dict:
+    """
+    Envoie un email via Resend avec logs explicites.
+    Retourne {ok: bool, id|error: str}.
+    """
+    print(f"[email] Tentative envoi à {to} (sujet: {subject!r}, from: {RESEND_FROM})...")
+    if not RESEND_API_KEY:
+        print("[email] Erreur : RESEND_API_KEY manquant dans .env")
+        return {"ok": False, "error": "RESEND_API_KEY manquant"}
+    if not to:
+        print("[email] Erreur : destinataire vide")
+        return {"ok": False, "error": "destinataire vide"}
+    try:
+        resp = resend.Emails.send({
+            "from":    RESEND_FROM,
+            "to":      [to],
+            "subject": subject,
+            "text":    body,
+        })
+        # resend SDK retourne dict avec "id" en cas de succès
+        email_id = resp.get("id") if isinstance(resp, dict) else None
+        if email_id:
+            print(f"[email] Succès — id={email_id}")
+            return {"ok": True, "id": email_id}
+        # Pas d'id mais pas d'exception : on log la réponse brute
+        print(f"[email] Réponse Resend ambiguë : {resp!r}")
+        return {"ok": True, "id": str(resp)}
+    except Exception as e:
+        # Resend lève des exceptions avec détails (domain not verified, etc.)
+        print(f"[email] Erreur : {type(e).__name__}: {e}")
+        return {"ok": False, "error": f"{type(e).__name__}: {e}"}
+
+
+async def send_weekly_prof_email():
+    """Génère et envoie le rapport hebdo profs via Resend — vendredi 18h."""
+    if not RESEND_API_KEY or not QUENTIN_EMAIL:
+        print("[email] RESEND_API_KEY ou QUENTIN_EMAIL manquant, rapport hebdo ignoré.")
+        return
+
+    journal   = load_json(JOURNAL_FILE, [])
+    cutoff    = now_utc() - datetime.timedelta(days=7)
+    week      = [e for e in journal if datetime.datetime.fromisoformat(e["date"]) > cutoff]
+    business  = load_business()
+    lt        = load_long_term()
+
+    journal_text = "\n".join(
+        f"- [{e['date'][:10]}] {e.get('auteur','?')}: {e.get('contenu','')}"
+        for e in week
+    ) or "Aucune entrée cette semaine."
+    decisions_text = "\n".join(
+        f"- {d.get('contenu','')}" for d in lt.get("decisions", [])[-5:]
+    ) or "Aucune."
+
+    prompt = (
+        f"Tu es {BOT_NAME}, co-fondateur virtuel de VAO.\n"
+        f"Génère un rapport hebdomadaire à destination des professeurs ESCP (500 mots max).\n"
+        f"Format EXACT :\n"
+        f"## Avancement\n[ce qui a été fait]\n\n"
+        f"## Compétences mobilisées\n[compétences ESCP appliquées]\n\n"
+        f"## Prochaines étapes\n[plan semaine prochaine]\n\n"
+        f"Journal de la semaine :\n{journal_text}\n\n"
+        f"Décisions récentes :\n{decisions_text}\n\n"
+        f"Stats : leads={business.get('leads_total')}, statuts={json.dumps(business.get('statuts', {}))}\n\n"
+        f"Ton : professionnel mais concret. En français."
+    )
+    try:
+        resp = client.messages.create(
+            model="claude-sonnet-4-20250514",
+            max_tokens=800,
+            messages=[{"role": "user", "content": prompt}],
+        )
+        body = resp.content[0].text.strip()
+    except Exception as e:
+        body = f"Erreur génération rapport : {e}"
+
+    paris     = now_paris()
+    week_str  = paris.strftime("semaine du %d/%m/%Y")
+    subject   = f"Rapport hebdomadaire VAO — {week_str}"
+
+    result = send_email_resend(QUENTIN_EMAIL, subject, body)
+    if result["ok"]:
+        await broadcast(f"📧 Rapport hebdo envoyé à {QUENTIN_EMAIL}")
+    else:
+        await broadcast(f"❌ Erreur envoi rapport hebdo : {result['error']}")
 
 
 async def scheduler_loop():
@@ -1045,12 +1371,12 @@ async def scheduler_loop():
     last_checkin_date     = None
     last_summary_week     = None
     last_brief_date       = None
-    last_report_date      = None
-    last_journal_date     = None
+    last_prof_email_week  = None
 
     while True:
-        now   = now_utc()
-        paris = now_paris()
+        now    = now_utc()
+        paris  = now_paris()
+        is_weekend = paris.weekday() >= 5  # samedi=5, dimanche=6
 
         # Crash check toutes les heures
         if last_crash_check is None or (now - last_crash_check).total_seconds() >= 3600:
@@ -1079,8 +1405,8 @@ async def scheduler_loop():
                 print(f"[PIPELINE] Erreur pipeline_advance : {e}")
             last_pipeline_check = now
 
-        # Boucle autonome 2x par jour
-        if last_autonomous_tick is None or (now - last_autonomous_tick).total_seconds() >= 43200:
+        # Boucle autonome 2x par jour (pause le week-end)
+        if not is_weekend and (last_autonomous_tick is None or (now - last_autonomous_tick).total_seconds() >= 43200):
             try:
                 await autonomous_loop_tick(running_procs)
             except Exception:
@@ -1089,13 +1415,13 @@ async def scheduler_loop():
 
         today = paris.date()
 
-        # Brief matin à 8h
-        if paris.hour == 8 and last_brief_date != today:
+        # Brief matin à 8h (jours ouvrés uniquement)
+        if paris.hour == 8 and not is_weekend and last_brief_date != today:
             await morning_brief()
             last_brief_date = today
 
-        # Check-in + rapport autonome à 21h
-        if paris.hour == 21 and last_checkin_date != today:
+        # Check-in + rapport autonome à 21h (jours ouvrés uniquement)
+        if paris.hour == 21 and not is_weekend and last_checkin_date != today:
             await daily_checkin()
             try:
                 await daily_autonomous_report()
@@ -1103,19 +1429,53 @@ async def scheduler_loop():
                 pass
             last_checkin_date = today
 
-        # Remplissage journal Lovable à 23h59 (silencieux, skip si aucun check-in)
-        if paris.hour == 23 and paris.minute >= 59 and last_journal_date != today:
+        # Consolidation différée du journal après check-in
+        # - 30 min après dernière réponse si tout le monde a répondu
+        # - sinon 2h après envoi (avec ce qu'on a, ou rien)
+        # - pas de consolidation le week-end (le check-in n'est pas envoyé)
+        if (
+            checkin_state
+            and not checkin_state.get("consolidated")
+            and not is_weekend
+        ):
             try:
-                await fill_daily_journal()
+                sent_at = datetime.datetime.fromisoformat(checkin_state["sent_at"])
+                age_sec = (now - sent_at).total_seconds()
+                responses = checkin_state.get("responses", {})
+                ready = False
+
+                if responses:
+                    last_received = max(
+                        datetime.datetime.fromisoformat(r["received_at"])
+                        for r in responses.values()
+                    )
+                    if (now - last_received).total_seconds() >= CHECKIN_DELAY_AFTER_LAST:
+                        ready = True
+
+                if not ready and age_sec >= CHECKIN_HARD_DEADLINE:
+                    ready = True  # 2h max — on consolide ce qu'on a (peut être vide)
+
+                if ready:
+                    await consolidate_checkin()
+                    # Nettoyer les awaiting_journal restants pour éviter
+                    # qu'une réponse tardive crée une deuxième entrée
+                    awaiting_journal.clear()
             except Exception as e:
-                print(f"[journal] erreur fill_daily_journal : {e}")
-            last_journal_date = today
+                print(f"[checkin] Erreur consolidation : {e}")
 
         # Résumé hebdo dimanche à 20h
         week_num = paris.isocalendar()[1]
         if paris.weekday() == 6 and paris.hour == 20 and last_summary_week != week_num:
             await weekly_summary()
             last_summary_week = week_num
+
+        # Email hebdo profs — vendredi 18h
+        if paris.weekday() == 4 and paris.hour == 18 and last_prof_email_week != week_num:
+            try:
+                await send_weekly_prof_email()
+            except Exception as e:
+                print(f"[email] Erreur rapport hebdo : {e}")
+            last_prof_email_week = week_num
 
         await asyncio.sleep(60)
 
@@ -1239,6 +1599,8 @@ async def cmd_logs(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def cmd_ingest(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not authorized(update): return
 
+    # Capturer le chat_id pour répondre UNIQUEMENT à l'initiateur (pas de broadcast)
+    chat_id = str(update.effective_chat.id)
     kb_before = len(load_kb() or [])
     await safe_reply(update, f"📚 Ingestion en cours… ({kb_before} chunks en base)\nJe te préviens quand c'est terminé.", markdown=False)
 
@@ -1253,16 +1615,20 @@ async def cmd_ingest(update: Update, context: ContextTypes.DEFAULT_TYPE):
             kb_after = len(load_kb() or [])
             added    = kb_after - kb_before
             status   = f"✅ +{added} chunks" if added > 0 else "✅ Rien de nouveau"
-            await broadcast(f"{status} — {kb_after} chunks au total\n```\n{out}\n```")
+            await send(chat_id, f"{status} — {kb_after} chunks au total\n```\n{out}\n```")
         except Exception as e:
-            await broadcast(f"❌ Erreur ingestion : {e}")
+            await send(chat_id, f"❌ Erreur ingestion : {e}")
 
     asyncio.create_task(_run())
 
 
 async def cmd_brief(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not authorized(update): return
-    await morning_brief()
+    # Pas de broadcast : on répond uniquement au demandeur, sans déclencher
+    # les alertes proactives (qui seraient broadcastées à tout le monde).
+    recipient = founder_name(update.effective_chat.id)
+    msg = await _generate_brief_text(trigger_alerts=False, recipient=recipient)
+    await safe_reply(update, msg)
 
 
 # ─── INGESTION DOCUMENT TELEGRAM ──────────────────────────────────────────────
@@ -1272,19 +1638,21 @@ SUPPORTED_EXT  = {".pdf", ".txt"}
 
 def _extract_text_file(path: Path) -> str:
     if path.suffix.lower() == ".pdf":
-        import pdfplumber
-        parts = []
-        with pdfplumber.open(path) as pdf:
-            for page in pdf.pages:
-                t = page.extract_text()
-                if t:
-                    parts.append(t)
-        return "\n".join(parts)
-    # txt — essai plusieurs encodages
+        try:
+            import pdfplumber
+            parts = []
+            with pdfplumber.open(path) as pdf:
+                for page in pdf.pages:
+                    t = page.extract_text()
+                    if t:
+                        parts.append(t)
+            return "\n".join(parts)
+        except Exception:
+            pass  # PDF invalide — on tente en texte brut ci-dessous
     for enc in ("utf-8", "utf-8-sig", "latin-1"):
         try:
             return path.read_text(encoding=enc)
-        except UnicodeDecodeError:
+        except (UnicodeDecodeError, ValueError):
             continue
     return ""
 
@@ -1334,13 +1702,13 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     # Nom de fichier sécurisé — on préserve l'extension réelle
-    default_ext = ".pdf" if "pdf" in mime else ".txt"
+    default_ext = ext if ext in SUPPORTED_EXT else (".pdf" if "pdf" in mime else ".txt")
     raw_name = doc.file_name or f"doc_{doc.file_id}{default_ext}"
     safe_name = re.sub(r'[^\w\s\-.]', '_', raw_name).strip()
     if Path(safe_name).suffix.lower() not in SUPPORTED_EXT:
         safe_name += default_ext
 
-    dest = BASE / "docs" / safe_name
+    dest = Path("/opt/openclaw/docs") / safe_name
     dest.parent.mkdir(parents=True, exist_ok=True)
 
     await safe_reply(update, f"📥 Réception de *{esc(raw_name)}*…")
@@ -1439,27 +1807,208 @@ async def cmd_memoire(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await safe_reply(update, "\n".join(parts))
 
 
-async def cmd_aide(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def cmd_test_email(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """/test_email — envoie un email de test à QUENTIN_EMAIL via Resend."""
     if not authorized(update): return
-    msg = (
-        "🦞 *CroustyLobster — Commandes VAO*\n\n"
-        "/stats — Stats API (leads, statuts)\n"
-        "/start_scraper — Lance le scraper géo\n"
-        "/stop_scraper — Arrête le scraper\n"
-        "/start_enrich — Lance l'enrichissement\n"
-        "/stop_enrich — Arrête l'enrichissement\n"
-        "/status — État agents + disque/RAM\n"
-        "/logs — Dernières 20 lignes de logs\n"
-        "/ingest — Ingère les PDFs de /opt/openclaw/docs/\n"
-        "/brief — Force le brief matin\n"
-        "/memoire — Résumé de ce que je sais sur le projet\n"
-        "/autonome — Active/désactive la boucle autonome\n"
-        "/decisions — 10 dernières décisions prises seul\n"
-        "/plan — Ce que l'agent prévoit de faire demain\n"
-        "/aide — Cette aide\n\n"
-        "Envoie n'importe quel message pour me poser une question."
+    if not RESEND_API_KEY:
+        await safe_reply(
+            update,
+            "❌ RESEND_API_KEY absent du .env — vérifie /opt/openclaw/.env",
+            markdown=False,
+        )
+        return
+    if not QUENTIN_EMAIL:
+        await safe_reply(
+            update,
+            "❌ QUENTIN_EMAIL absent du .env — vérifie /opt/openclaw/.env",
+            markdown=False,
+        )
+        return
+
+    await safe_reply(
+        update,
+        f"📧 Envoi d'un email de test à {QUENTIN_EMAIL} (from: {RESEND_FROM})…",
+        markdown=False,
+    )
+    paris = now_paris()
+    subject = f"Test {BOT_NAME} — {paris.strftime('%d/%m %H:%M')}"
+    body = (
+        f"Ceci est un email de test envoyé par {BOT_NAME} via Resend.\n\n"
+        f"Heure : {paris.isoformat()}\n"
+        f"From : {RESEND_FROM}\n"
+        f"To   : {QUENTIN_EMAIL}\n\n"
+        "Si tu reçois cet email, la chaîne Resend est opérationnelle."
+    )
+    result = send_email_resend(QUENTIN_EMAIL, subject, body)
+    if result["ok"]:
+        await safe_reply(
+            update,
+            f"✅ Email de test envoyé (id: {result.get('id', '?')})\n"
+            f"Vérifie ta boîte ({QUENTIN_EMAIL}) — pense aussi aux spams.",
+            markdown=False,
+        )
+    else:
+        await safe_reply(
+            update,
+            f"❌ Échec envoi : {result['error']}\n\n"
+            f"Pistes :\n"
+            f"• Domaine {RESEND_FROM.split('@')[-1]} non vérifié sur Resend ?\n"
+            f"• Clé API expirée/invalide ?\n"
+            f"• Quota Resend dépassé ?",
+            markdown=False,
+        )
+
+
+async def cmd_push(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Analyse les 10 derniers échanges (user + assistant) et pousse les actions dans le Trello."""
+    if not authorized(update): return
+    chat_id = str(update.effective_chat.id)
+    history = get_history(chat_id)
+    if not history:
+        await safe_reply(update, "Aucun historique de conversation à analyser.", markdown=False)
+        return
+
+    last_msgs = history[-10:]
+    combined = "\n\n".join(
+        f"[{m['role']}] {m['content']}" for m in last_msgs
+    )
+
+    await safe_reply(
+        update,
+        f"🔍 Analyse des {len(last_msgs)} derniers messages…",
+        markdown=False,
+    )
+
+    tasks = await extract_tasks_list(combined, is_conversation=True)
+    if not tasks:
+        await safe_reply(
+            update,
+            "Je ne vois pas d'actions concrètes dans notre conversation récente. "
+            "Dis-moi explicitement quoi ajouter.",
+            markdown=False,
+        )
+        return
+
+    result = await insert_tasks_supabase(tasks)
+    if result.get("error"):
+        await safe_reply(update, f"Erreur insertion : {result['error']}")
+        return
+
+    inserted = result.get("inserted", [])
+    msg = format_inserted_tasks(
+        inserted,
+        f"✅ *{len(inserted)} tâche(s) ajoutée(s) au Trello :*",
     )
     await safe_reply(update, msg)
+
+
+# ─── MENU INTERACTIF ─────────────────────────────────────────────────────────
+# Routing callback_data → fonction de commande. Les fonctions reçoivent
+# (update, context) ; safe_reply gère update.effective_message → OK pour
+# callback comme pour commande classique.
+def _menu_routes():
+    return {
+        # Dashboard
+        "menu_stats":         cmd_stats,
+        "menu_status":        cmd_status,
+        "menu_logs":          cmd_logs,
+        # Pipeline
+        "menu_start_scraper": cmd_start_scraper,
+        "menu_stop_scraper":  cmd_stop_scraper,
+        "menu_start_enrich":  cmd_start_enrich,
+        "menu_stop_enrich":   cmd_stop_enrich,
+        "menu_ingest":        cmd_ingest,
+        # Outreach
+        "menu_test_email":    cmd_test_email,
+        # Agent
+        "menu_brief":         cmd_brief,
+        "menu_memoire":       cmd_memoire,
+        "menu_autonome":      cmd_autonome,
+        "menu_decisions":     cmd_decisions,
+        "menu_plan":          cmd_plan,
+        "menu_push":          cmd_push,
+        # Système
+        "menu_aide":          None,  # rendu plus bas : ré-affiche le menu
+    }
+
+
+def build_menu_markup() -> InlineKeyboardMarkup:
+    B = InlineKeyboardButton
+    # Un bouton "noop" sert de header de catégorie (cliquable mais sans effet).
+    H = lambda label: B(label, callback_data="menu_noop")
+    rows = [
+        [H("—— 📊 Dashboard ——")],
+        [B("📊 Stats",        callback_data="menu_stats"),
+         B("⚙️ Status",       callback_data="menu_status")],
+        [B("📋 Logs",         callback_data="menu_logs")],
+
+        [H("—— 🔧 Pipeline ——")],
+        [B("▶️ Scraper",      callback_data="menu_start_scraper"),
+         B("⏹ Stop scraper",  callback_data="menu_stop_scraper")],
+        [B("▶️ Enrich",       callback_data="menu_start_enrich"),
+         B("⏹ Stop enrich",   callback_data="menu_stop_enrich")],
+        [B("📥 Ingest KB",    callback_data="menu_ingest")],
+
+        [H("—— 📬 Outreach ——")],
+        [B("📧 Test email",   callback_data="menu_test_email")],
+
+        [H("—— 🧠 Agent ——")],
+        [B("☀️ Brief",        callback_data="menu_brief"),
+         B("🧠 Mémoire",      callback_data="menu_memoire")],
+        [B("🤖 Autonome",     callback_data="menu_autonome"),
+         B("📜 Décisions",    callback_data="menu_decisions")],
+        [B("🗓 Plan",         callback_data="menu_plan"),
+         B("📌 Push actions", callback_data="menu_push")],
+
+        [H("—— ⚙️ Système ——")],
+        [B("❓ Aide",          callback_data="menu_aide")],
+    ]
+    return InlineKeyboardMarkup(rows)
+
+
+MENU_TITLE = (
+    f"🤖 *{BOT_NAME} — Menu*\n\n"
+    "Clique sur une action. Tu peux aussi taper la commande directement."
+)
+
+
+async def cmd_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not authorized(update): return
+    await update.effective_message.reply_text(
+        MENU_TITLE,
+        reply_markup=build_menu_markup(),
+        parse_mode="Markdown",
+    )
+
+
+async def cmd_aide(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # /aide affiche le même menu interactif que /menu.
+    await cmd_menu(update, context)
+
+
+async def menu_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()  # acquitter immédiatement (évite le sablier Telegram)
+
+    if not authorized(update):
+        return
+
+    data = query.data or ""
+    if data == "menu_noop":
+        return
+    if data == "menu_aide":
+        # Ré-affiche le menu pour rester cohérent avec /aide.
+        await cmd_menu(update, context)
+        return
+
+    handler = _menu_routes().get(data)
+    if handler is None:
+        return
+    try:
+        await handler(update, context)
+    except Exception as e:
+        print(f"[menu] Erreur route {data} : {e}")
+        await query.message.reply_text(f"❌ Erreur : {e}")
 
 
 # ─── MESSAGES LIBRES ──────────────────────────────────────────────────────────
@@ -1468,44 +2017,89 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not authorized(update): return
     chat_id     = str(update.effective_chat.id)
     text        = update.message.text
-    author_name = update.effective_user.first_name or "Fondateur"
+    # FOUNDERS est la source unique de vérité — le prénom Telegram est un fallback
+    # (évite "Fondateur" dans le journal si Telegram ne renvoie pas de first_name).
+    author_name = FOUNDERS.get(chat_id) or update.effective_user.first_name or "Fondateur"
 
-    # Validation des tâches proposées (oui/ok/non/modifier)
-    if chat_id in pending_tasks:
-        answer = text.strip().lower()
-        if answer in {"oui", "ok", "yes", "y", "o"}:
-            tasks = pending_tasks.pop(chat_id)
-            await safe_reply(update, "⏳ Insertion dans Supabase…", markdown=False)
-            result = await insert_tasks_supabase(tasks)
-            await safe_reply(update, format_insertion_result(result), markdown=False)
-            return
-        if answer in {"non", "no", "n"}:
-            pending_tasks.pop(chat_id, None)
-            await safe_reply(update, "Ok, j'oublie ces propositions.", markdown=False)
-            return
-        if answer.startswith("modif"):
-            pending_tasks.pop(chat_id, None)
-            await safe_reply(update, "Ok, dis-moi comment tu veux modifier la liste.", markdown=False)
-            return
-        # Autre réponse → on abandonne la proposition et on traite normalement
-        pending_tasks.pop(chat_id, None)
-
-    # Réponse au check-in quotidien
+    # Réponse au check-in quotidien — stockée, journal consolidé en différé
     if chat_id in awaiting_journal:
         awaiting_journal.discard(chat_id)
         analyse = await analyze_checkin(author_name, text)
-        append_journal(chat_id, author_name, text, analyse)
+        # On stocke dans checkin_state au lieu d'écrire directement dans le journal
+        if checkin_state is not None and not checkin_state.get("consolidated"):
+            checkin_state["responses"][chat_id] = {
+                "author":      author_name,
+                "text":        text,
+                "analyse":     analyse,
+                "received_at": now_utc().isoformat(),
+            }
+        else:
+            # Fallback : pas d'état actif → on écrit directement (cas réponse tardive)
+            append_journal(chat_id, author_name, text, analyse)
         # Extraction mémoire en arrière-plan
         asyncio.create_task(extract_and_save_memory(text, analyse))
-        reply = f"✅ *Noté dans le journal !*\n\n{analyse}"
-        await safe_reply(update, reply)
-
-        # Propositions de tâches pour demain
-        tasks = await propose_tasks_for_tomorrow(author_name, text, analyse)
-        if tasks:
-            pending_tasks[chat_id] = tasks
-            await safe_reply(update, format_task_proposal(tasks), markdown=False)
+        await safe_reply(update, analyse)
         return
+
+    # Tâches : UNIQUEMENT si l'utilisateur le demande explicitement
+    # ("ajoute une tâche", "mets ça dans le dashboard", etc.).
+    # Le check-in du soir et /push restent les autres canaux d'ajout.
+    inserted_tasks: list[dict] = []
+    task_context = ""
+    if is_explicit_task_request(text):
+        try:
+            # On lit l'historique récent : "ajoute ça au dashboard" fait souvent
+            # référence à ce qui vient d'être discuté, pas au texte du déclencheur.
+            recent = get_history(chat_id)[-8:]
+            if recent:
+                convo = "\n\n".join(
+                    f"[{m['role']}] {m['content']}" for m in recent
+                )
+                convo += f"\n\n[user] {text}"
+                tasks = await extract_tasks_list(convo, is_conversation=True)
+            else:
+                tasks = await extract_tasks_list(text)
+            if tasks:
+                result = await insert_tasks_supabase(tasks)
+                inserted_tasks = result.get("inserted", [])
+                if result.get("error"):
+                    await safe_reply(update, f"Erreur insertion : {result['error']}")
+            else:
+                await safe_reply(
+                    update,
+                    "Je ne vois pas d'action concrète à ajouter. "
+                    "Dis-moi explicitement quoi mettre dans le dashboard.",
+                    markdown=False,
+                )
+                # Pas de tâche extraite → on a déjà répondu, on n'enchaîne pas Claude.
+                add_to_history(chat_id, "user", text)
+                add_to_history(chat_id, "assistant", "[aucune tâche détectée]")
+                return
+        except Exception as e:
+            print(f"[task_explicit] Erreur : {e}")
+        if inserted_tasks:
+            task_lines = "\n".join(
+                f"- {t['title']} → {t.get('assigned_to', 'Quentin')} ({t.get('tag', 'Admin')})"
+                for t in inserted_tasks
+            )
+            task_context = (
+                f"\n[Tâches déjà ajoutées au dashboard sur sa demande "
+                f"(NE PAS les répéter, elles ont déjà été confirmées dans un "
+                f"message séparé) :\n{task_lines}]\n"
+            )
+            confirmation_msg = format_inserted_tasks(
+                inserted_tasks,
+                f"✅ *{len(inserted_tasks)} tâche(s) ajoutée(s) au dashboard :*",
+            )
+            await safe_reply(update, confirmation_msg)
+
+            # Si le message ne contient pas de question explicite EN PLUS de
+            # la demande de tâche, la confirmation suffit : on ne génère pas
+            # de réponse Claude derrière (sinon double message redondant).
+            if not QUESTION_RE.search(text):
+                add_to_history(chat_id, "user", text)
+                add_to_history(chat_id, "assistant", confirmation_msg)
+                return
 
     # Contexte VAO + RAG
     stats   = get_vao_stats()
@@ -1538,6 +2132,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"Stats VAO : {stats_text}\n"
         f"Journal récent :\n{journal_text}\n"
         f"{rag_section}"
+        f"{task_context}"
         f"Utilisateur : {author_name}\n\n"
         f"{text}"
     )
@@ -1545,33 +2140,35 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Si historique existe, on injecte le contexte seulement dans le nouveau message
     messages = history + [{"role": "user", "content": user_content}]
 
+    # Réponse Claude avec continuation automatique si stop_reason=="max_tokens".
+    # 2 itérations max → 8 000 tokens out plafond. Au-delà, c'est trop long pour Telegram.
+    reply = ""
     try:
         sys_prompt = build_system_prompt()
-        resp = client.messages.create(
-            model="claude-sonnet-4-5",
-            max_tokens=4096,
-            system=sys_prompt,
-            messages=messages,
-        )
-        reply = resp.content[0].text
-        # Continuation automatique si la réponse a été tronquée
-        loop_msgs = list(messages)
-        guard = 0
-        while resp.stop_reason == "max_tokens" and guard < 4:
-            guard += 1
-            loop_msgs = loop_msgs + [
-                {"role": "assistant", "content": reply},
-                {"role": "user", "content": "Continue."},
-            ]
+        cur_messages = list(messages)
+        for iteration in range(2):
             resp = client.messages.create(
-                model="claude-sonnet-4-5",
-                max_tokens=4096,
+                model="claude-sonnet-4-20250514",
+                max_tokens=4000,
                 system=sys_prompt,
-                messages=loop_msgs,
+                messages=cur_messages,
             )
-            reply += resp.content[0].text
+            chunk = resp.content[0].text if resp.content else ""
+            reply += chunk
+            stop = getattr(resp, "stop_reason", None)
+            if stop != "max_tokens":
+                break
+            print(f"[claude] Continuation auto (iter {iteration + 1}) — stop_reason=max_tokens, len={len(reply)}")
+            # On rappelle Claude en lui passant la réponse partielle pour qu'il la termine
+            cur_messages = cur_messages + [
+                {"role": "assistant", "content": chunk},
+                {"role": "user",      "content": "Continue exactement où tu t'es arrêté, sans répéter ce que tu viens d'écrire."},
+            ]
     except Exception as e:
-        reply = f"Erreur Claude : {e}"
+        if not reply:
+            reply = f"Erreur Claude : {e}"
+        else:
+            reply += f"\n\n[continuation interrompue : {e}]"
 
     # Mise à jour de l'historique
     add_to_history(chat_id, "user", text)
@@ -1580,6 +2177,12 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Extraction mémoire en arrière-plan (silencieuse)
     asyncio.create_task(extract_and_save_memory(text, reply))
 
+    # Le mode autonome post-réponse a été retiré : il créait des faux positifs
+    # à chaque message contenant des verbes d'action. Les tâches s'ajoutent
+    # désormais uniquement via :
+    #   - une demande explicite ("ajoute une tâche…")
+    #   - la commande /push
+    #   - le check-in du soir
     await safe_reply(update, reply)
 
 
@@ -1619,6 +2222,9 @@ async def main():
     init_memory_files()
     auto_ingest_if_empty()
 
+    # Restauration de l'historique de conversation (persistant à travers les restarts)
+    load_history_from_disk()
+
     # Refresh business au démarrage
     try:
         refresh_business()
@@ -1637,11 +2243,16 @@ async def main():
     app.add_handler(CommandHandler("ingest",         cmd_ingest))
     app.add_handler(CommandHandler("brief",          cmd_brief))
     app.add_handler(CommandHandler("memoire",        cmd_memoire))
+    app.add_handler(CommandHandler("push",           cmd_push))
+    app.add_handler(CommandHandler("test_email",     cmd_test_email))
     app.add_handler(CommandHandler("aide",           cmd_aide))
+    app.add_handler(CommandHandler("menu",           cmd_menu))
     # Boucle autonome
     app.add_handler(CommandHandler("autonome",       cmd_autonome))
     app.add_handler(CommandHandler("decisions",      cmd_decisions))
     app.add_handler(CommandHandler("plan",           cmd_plan))
+    # Routing des boutons du menu interactif (pattern ^menu_).
+    app.add_handler(CallbackQueryHandler(menu_callback, pattern=r"^menu_"))
     app.add_handler(MessageHandler(filters.Document.PDF | filters.Document.TXT, handle_document))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
@@ -1649,11 +2260,26 @@ async def main():
     await app.start()
     await app.updater.start_polling()
 
-    await broadcast(
-        "🦞 *CroustyLobster en ligne*\n"
-        "Co-fondateur virtuel VAO opérationnel.\n"
-        "/aide pour la liste des commandes."
+    # Message de démarrage avec bouton "📋 Menu" sous le texte.
+    startup_text = (
+        f"🤖 *{BOT_NAME} en ligne*\n"
+        "Co-fondateur virtuel VAO opérationnel."
     )
+    startup_markup = InlineKeyboardMarkup(
+        [[InlineKeyboardButton("📋 Menu", callback_data="menu_aide")]]
+    )
+    for cid in CHAT_IDS:
+        try:
+            await bot().send_message(
+                chat_id=cid,
+                text=startup_text,
+                parse_mode="Markdown",
+                reply_markup=startup_markup,
+            )
+        except Exception as e:
+            print(f"[startup] Erreur envoi menu à {cid} : {e}")
+
+    asyncio.create_task(start_crm_watcher())
 
     await scheduler_loop()
 

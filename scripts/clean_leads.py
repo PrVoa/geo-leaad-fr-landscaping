@@ -36,45 +36,57 @@ from config import DB_URL as _DB_URL, get_logger
 
 log = get_logger("clean_leads")
 
-# ---------------------------------------------------------------------------
-# NIVEAU 1 — Mots paysagistes positifs (garder directement)
-# ---------------------------------------------------------------------------
+# ============================================================================
+# CLASSIFICATION PAR PATTERNS (regex compilées)
+# ============================================================================
+#
+# Toutes les regex matchent sur le nom NORMALISÉ : lowercase, sans accents,
+# ponctuation remplacée par des espaces, espaces collapsés.
+# Ne PAS écrire d'accents dans les patterns (ils ont été retirés).
+#
+# Pour ajouter un nouveau cas hors-cible :
+#   1. Trouver la catégorie qui colle le mieux dans EXCLUSION_PATTERNS
+#   2. Ajouter ton motif dans la regex existante (alternation `|`)
+#   3. Ou créer une nouvelle entrée si c'est une catégorie inédite
+#
+# Pour les exclusions "rachetables" (BTP/nettoyage qui peuvent être un vrai
+# paysagiste si "jardin/paysage" est présent), utiliser EXCLUSION_SAUVABLES.
+# ============================================================================
 
-MOTS_GARDER = [
-    "paysage", "paysagiste", "paysagisme",
-    "jardin", "jardins", "jardinier", "jardinage",
-    "espaces verts", "espace vert",
-    "elagage", "elagueur",
-    "arboriste", "arborist", "arboriculture",
-    "verdure", "vegetal",
-    "bocage",
-    "parcs et jardins", "parc et jardin",
-    "esprit vert", "nature verte",
-    "cimes",
-    "horticulture", "horticole",
-    "pepiniere",
-    "amenagement paysager",
-    "entretien jardin", "creation jardin",
-]
+# ── NIVEAU 1 : mots positifs (paysagiste FR) ───────────────────────────────
+GARDER_RE = re.compile(
+    r"\b("
+    r"paysag(e|es|er|ere|ers|eres|iste|istes|isme)"
+    r"|jardin(s|ier|iere|iers|ieres|age|ages)?"
+    r"|espaces?\s+verts?"
+    r"|elag(age|ages|ueur|ueurs|ueuse|ueuses)"
+    r"|arborist(e|es)|arboriculture|arboricole"
+    r"|verdure|vegetal(e|es|aux)?"
+    r"|bocage(s)?|cimes?"
+    r"|horticult(eur|rice|ure|urale|urales)|horticole(s)?"
+    r"|pepini(ere|eres|eriste|eristes)"
+    r"|amenagement(s)?\s+paysager(s)?"
+    r"|entretien\s+(de\s+)?jardin(s)?"
+    r"|creation\s+(de\s+)?jardin(s)?"
+    r"|parcs?\s+et\s+jardins?"
+    r"|esprit\s+vert|nature\s+verte"
+    r")\b",
+    re.IGNORECASE,
+)
 
-# Mots positifs conditionnels : valides seulement si combinés avec un autre mot positif
-MOTS_GARDER_CONDITIONNELS = {
-    "abattage": ["elagage", "jardin", "paysage", "arbo", "arbres"],
-}
+# Mot positif conditionnel : "abattage" ne suffit pas seul
+ABATTAGE_RE = re.compile(r"\babattage\b", re.IGNORECASE)
+ABATTAGE_CONTEXT_RE = re.compile(
+    r"\b(elagage|jardin|paysage|arbor|arbres?)\b", re.IGNORECASE
+)
 
-# ---------------------------------------------------------------------------
-# NIVEAU 2 — Mots d'exclusion
-# Tous les mots sont en forme normalisée : lowercase, sans accents, & → espace
-# ---------------------------------------------------------------------------
-
-# ── Franchises et réseaux de services à domicile ──
-# PRIORITÉ 0 : vérifiées avant tout mot positif (franchises avec "jardinage"
-# dans leur description seraient faussement gardées sinon)
-FRANCHISES = [
+# ── PRIORITÉ 0b : franchises et marques (substring littéral) ───────────────
+# Ces marques ne se prêtent pas à une regex (mots commerciaux courts qui
+# pourraient déclencher faux positifs). Liste maintenue à plat.
+FRANCHISES_LITERAL = [
     "azae", "domaliance",
-    "maison et services", "maison services",  # "Maison & Services" → "maison services"
-    "apef ",
-    "axeo services", "axeo ",
+    "maison et services", "maison services",
+    "apef ", "axeo services", "axeo ",
     "free dom", "centre services",
     "home services", "generale des services", "vivaservices",
     "domicile clean", "tout a dom", "bien dans sa maison",
@@ -83,176 +95,288 @@ FRANCHISES = [
     "o2 jardinage", "o2 jardi",
     "age d or services",
     "groupama",
-    "familles services",         # "Familles & Services"
-    "essentiel domicile",        # "Essentiel & Domicile"
+    "familles services", "essentiel domicile",
     "confiez-nous", "confiez nous",
     "shiva ",
     "aide a domicile", "aide domicile",
     "garde d enfants", "garde enfants",
-    "portage de repas",
-    "maintien a domicile",
+    "portage de repas", "maintien a domicile",
 ]
 
-# ── Formation et éducation ──
-FORMATION = [
-    "lycee", "lycee professionnel",
-    "cfa ", "cfppa", "mfr ", "ensp",
-    "ecole nationale", "campus",
-    "agrocampus", "agrocampus ouest",
-    "btp cfa",
-    "centre de formation",
-    "institut national",
-    "insa ",
-    "naturapolis",
-]
+# ── NIVEAU 2 : exclusions fermes par catégorie (regex) ─────────────────────
+EXCLUSION_PATTERNS: dict[str, re.Pattern] = {
 
-# ── Associations, ESAT, insertion ──
-ASSOCIATIONS = [
-    "esat ",
-    "association solidarite", "association intermediaire",
-    "association internationale", "association emploi",
-    "adapei", "adcr", "ladapt",
-    "passerelles pour l emploi",
-    "association cherbourgeoise",
-    "fo r e t",       # FO.R.E.T après normalisation
-    "association granit",
-    "association eclair",
-    "association saint roch",
-    "graines competences",
-]
+    # Administration publique, collectivités, services régaliens
+    "administration": re.compile(
+        r"\b("
+        r"mair(ie|ies)|commune\s+de|communaute(s)?\s+de\s+communes?|"
+        r"departement\s+de|region\s+de|prefecture|sous[\s-]prefecture|"
+        r"ministere|conseil\s+(general|regional|departemental|municipal)|"
+        r"caisse\s+(des\s+depots|primaire|nationale|generale)|cgss|msa\b|"
+        r"cch?u|chu\b|hopital|polyclinique|"
+        r"ehpad|maison\s+de\s+retraite|"
+        r"tresorerie|tribunal|gendarmerie|commissariat|"
+        r"sdis|samu|pompiers|protection\s+civile"
+        r")\b",
+        re.IGNORECASE,
+    ),
 
-# ── Intérim et RH ──
-INTERIM = [
-    "interim", " interim",
-    "recrutement",
-    "aquila rh", "temporis ",
-    "r a s interim", "ras interim",
-    "agri-interim", "agri interim",
-    "hope interim",
-    "rm interim",
-    "terra interim",
-    "vert l interim",
-    "manne emploi",
-    "tridentt",
-]
+    # Éducation, formation, recherche
+    "education_formation": re.compile(
+        r"\b("
+        r"lycee(s)?|college(s)?|"
+        r"ecole(s)?(\s+(primaire|maternelle|secondaire|technique|nationale|d|du|de|des))?|"
+        r"groupe\s+scolaire|"
+        r"universite(s)?|faculte(s)?|"
+        r"cfa\b|cfppa|mfr\b|ensp|insa\b|naturapolis|agrocampus|agricampus|"
+        r"centre(s)?\s+de\s+formation|institut\s+(national|universitaire|de\s+formation)|"
+        r"campus|btp\s+cfa"
+        r")\b",
+        re.IGNORECASE,
+    ),
 
-# ── Tourisme et loisirs ──
-TOURISME = [
-    "camping",
-    "office de tourisme",
-    "planetarium",
-    "plage ", "dunes ",
-    "aire de jeux",
-    "cimetiere",
-    "gite ", "gites ",
-    "vacances ",
-    "loisirs chambery",
-    "events et loisirs",
-    "libellule evasions",
-    "voyages de luxe",
-    "balades canons",
-    "yelloh",
-    "parc des bruyeres",
-]
+    # Associations, ESAT, fondations, congrégations
+    "association_insertion": re.compile(
+        r"\b("
+        r"association(s)?|asbl|"
+        r"esat|adapei|adcr|ladapt|graines?\s+competences?|"
+        r"fondation|congregation|prieure|"
+        r"comite\s+(departemental|regional|local|national)|"
+        r"federation|union\s+(des|nationale|locale|sportive|departementale)|"
+        r"passerelle(s)?\s+pour\s+l\s?emploi|"
+        r"manne\s+emploi|fo\s+r\s+e\s+t"
+        r")\b",
+        re.IGNORECASE,
+    ),
 
-# ── Architecture et décoration d'intérieur ──
-ARCHITECTURE = [
-    "architecte d interieur",
-    "architecture interieur",
-    "decoration interieur",
-    "studio archi",
-    "atelier archi",
-    "urbanisme design",
-    "mc architecture",
-    "bureau d etudes techniques",
-    "ingenierie",
-    "odetec",
-    "caue ",
-    "conseil d architecture",
-]
+    # Intérim et RH
+    "interim_rh": re.compile(
+        r"\b("
+        r"interim|recrutement|"
+        r"aquila\s+rh|temporis|r\s?a\s?s\s+interim|ras\s+interim|"
+        r"agri[\s-]?interim|hope\s+interim|rm\s+interim|terra\s+interim|"
+        r"vert\s+l\s+interim|tridentt"
+        r")\b",
+        re.IGNORECASE,
+    ),
 
-# ── Espagnol et étranger ──
-ESPAGNOL = [
-    "limpiezas", "arquitectos",
-    "estudio de arquitectura",
-    "servicios y limpiezas",
-    "inmobiliaria",
-    "riells vacacions",
-    "jaam sociedad",
-    "blitzclean services",
-    "ingelan", "arkos", "nexobau",
-    "huw webb",
-]
+    # Tourisme, hôtellerie, loisirs, zoos
+    "tourisme_loisirs": re.compile(
+        r"\b("
+        r"camping(s)?|hotel(s|lerie)?|gite(s)?|chambre(s)?\s+d\s?hote(s)?|"
+        r"office\s+(de\s+)?tourisme|syndicat\s+d\s?initiative|"
+        r"planetarium|musee(s)?|aquarium|"
+        r"zoo|zoologique|zoologico|zoological|parc\s+animalier|"
+        r"yelloh|pierre\s+et\s+vacances|center\s+parcs?|"
+        r"village\s+de\s+vacances|centre\s+de\s+(loisirs|vacances)|"
+        r"events?\s+et\s+loisirs|loisirs\s+chambery|"
+        r"libellule\s+evasions?|voyages?\s+de\s+luxe|balades?\s+canons?|"
+        r"parc\s+des\s+bruyeres|"
+        r"discotheque|boite\s+de\s+nuit|cinema|theatre|"
+        r"club\s+(de\s+|sportif|nautique|equestre)"
+        r")\b",
+        re.IGNORECASE,
+    ),
 
-# ── Divers hors-cible ──
-DIVERS = [
-    "notaire",
-    "piscines de france",
-    "demenagement",
-    "location de nacelles", "location materiel",
-    "fls ",
-    "beton imprime",
-    "valormat", "dispano",
-    "natural stone",
-    "lippi ",
-    "artemat",
-    "ozae materiaux",
-    "garden park concept",
-    "beton pret",
-    "office national des forets", "onf ",
-    "caisse generale", "cgss", "msa ",
-    "aquagaia",
-    "stop taupes",
-    "centrale depannage",
-    "eco nuisibles",
-    "desinsectisation", "deratisation",
-    "destruction nuisibles", "anti nuisibles",
-    "esso turquoise",
-]
+    # Lieux/POI géographiques en PRÉFIXE de nom (anchored ^)
+    # Très efficace contre les entrées du référentiel géo qui ne sont pas
+    # des entreprises (zones, places, rues, quartiers, lotissements...).
+    "lieu_prefixe": re.compile(
+        r"^("
+        r"zone\s+(d\s?emplo|industriel|artisanal|d\s?activit|"
+        r"commercial|franche|urbain|agricol|d\s?amenagement|"
+        r"verte|natur|protege)|"
+        r"z\s?a\s?c\b|z\s?i\b|"
+        r"quartier\s|lotissement\s|cite\s|hameau\s|lieu[\s-]dit\s|"
+        r"residence\s|bourg\s|"
+        r"place\s+(de|du|des|d\s)|rue\s+(de|du|des|d\s)|"
+        r"avenue\s+(de|du|des|d\s)|bd\s+(de|du|des|d\s)|"
+        r"boulevard\s+(de|du|des|d\s)|allee\s+(de|du|des|d\s)|"
+        r"rond[\s-]point\s|carrefour\s+(de|du|des|d\s)|"
+        r"sentier\s|chemin\s+(de|du|des|d\s)|impasse\s+(de|du|des|d\s)|"
+        r"pont\s+(de|du|des|d\s)|tunnel\s+(de|du|des|d\s)"
+        r")",
+        re.IGNORECASE,
+    ),
 
-# ── Nettoyage professionnel pur ──
-NETTOYAGE = [
-    "nettoyage professionnel", "entreprise de nettoyage",
-    "clinitex", "proprete", "vitrerie", "lavage ",
-    "pressing ",
-    "isor ", "propnet", "nikita nettoyage",
-    "foltier nettoyage", "karl nettoyage",
-    "cnet nettoyage",
-    "clean now", "master net",
-    "partenaire service", "edif-propre",
-    "activ clean", "jon net",
-    "maison net", "nhps",
-    "ops ", "phps", "spid anjou",
-]
+    # Lieux/POI géographiques DANS le nom (peu importe la position)
+    "lieu_dans_nom": re.compile(
+        r"\b("
+        r"parc\s+(d\s?activit|industriel|naturel|national|regional|"
+        r"departemental|public|urbain|de\s+loisir|des\s+expositions?|"
+        r"floral|botanique)|"
+        r"aire\s+(de\s+jeux?|de\s+pique[\s-]nique|de\s+repos|de\s+service)|"
+        r"plage(s)?\s|dunes?\s|cote\s+(d\s|sauvage)|"
+        r"cimetiere(s)?|monument(s)?\s+aux|stele(s)?\s|memorial|"
+        r"chateau\s+(de|du|des|d\s)|fort\s+(de|du|des|d\s)|"
+        r"abbaye\s+(de|du|des|d\s)|"
+        r"eglise\s+(de|du|des|d\s|saint|sainte|notre|st\s)|"
+        r"cathedrale|chapelle\s+(de|du|des|d\s|saint)|"
+        r"basilique|temple\s|synagogue|mosquee|"
+        r"stade\s|gymnase|piscine\s+(municipale|de\s|du)|"
+        r"bibliotheque|mediatheque|"
+        r"office\s+national\s+des\s+forets?|onf\b|"
+        r"foret\s+(domaniale|de|du|des)"
+        r")\b",
+        re.IGNORECASE,
+    ),
 
-# ── BTP / toiture pur ──
-BTP = [
-    "couvreur", "toiture",
-    "maconnerie sarl", "renovation construction",
-    "charpente",
-    "etancheite", "ravalement",
-    "facade ",
-    "platrerie", "carrelage",
-    "peinture sarl", "menuiserie",
-    "electricite", "plomberie",
-    "chauffage sarl", "isolation ",
-]
+    # Architecture, design, ingénierie, bureau d'études
+    "architecture_design": re.compile(
+        r"\b("
+        r"architecte(s)?\s+d\s?interieur|"
+        r"architecture\s+interieur|"
+        r"decoration\s+interieur|decorateur(s)?|"
+        r"studio\s+d\s?archi|atelier\s+d\s?archi|"
+        r"bureau\s+d\s?etudes|ingenierie(\s+(du|en|des|services|bureau))?|"
+        r"caue\b|conseil\s+d\s?architecture|odetec|"
+        r"urbanisme\s+design|mc\s+architecture"
+        r")\b",
+        re.IGNORECASE,
+    ),
 
-# ---------------------------------------------------------------------------
-# Regroupements pour la logique de classification
-# ---------------------------------------------------------------------------
+    # Entreprises étrangères / langues étrangères
+    "etranger_non_fr": re.compile(
+        r"\b("
+        r"limpiezas?|arquitect[oa]s?|estudio\s+de\s+arquitectura|"
+        r"servicios?(\s+y\s+|\s+de\s+)|inmobiliaria|sociedad|"
+        r"\bs\s?l\b|\bs\s?l\s+u\b|"  # Sociedad Limitada (SL, SLU)
+        r"cleaning\s+service|building\s+(services?|maintenance)|"
+        r"riells\s+vacacions|jaam\s+sociedad|blitzclean|ingelan|arkos|nexobau|"
+        r"huw\s+webb"
+        r")\b",
+        re.IGNORECASE,
+    ),
 
-# Excluent SAUF si un mot jardin/paysage est présent dans le nom
-EXCLUSION_SANS_JARDIN = NETTOYAGE + BTP
+    # Traitement nuisibles, désinsectisation, démoussage
+    "nuisibles_traitement": re.compile(
+        r"\b("
+        r"desinsectisation|deratisation|desinfection|"
+        r"destruction\s+nuisibles?|anti[\s-]?nuisibles?|"
+        r"demoussage|demoussement|"
+        r"traitement\s+(de\s+)?(charpente|toiture|bois|termites?|merule|capricorne|humidite)|"
+        r"stop[\s-]?taupes?|eco[\s-]?nuisibles?|fouine|mulot|"
+        r"3d\s+(services?|hygiene)"
+        r")\b",
+        re.IGNORECASE,
+    ),
 
-# Excluent sans condition (hors franchises déjà en priorité 0)
-EXCLUSION_FERME = (
-    FORMATION + ASSOCIATIONS + INTERIM + TOURISME
-    + ARCHITECTURE + ESPAGNOL + DIVERS
+    # Commerce alimentaire, artisans non-paysagistes, services de proximité
+    "commerce_artisan": re.compile(
+        r"\b("
+        r"boulangerie(s)?|patisserie(s)?|"
+        r"boucherie(s)?|charcuterie(s)?|poissonnerie(s)?|"
+        r"epicerie(s)?|supermarche|hypermarche|superette|"
+        r"pharmacie(s)?|parapharmacie|"
+        r"restaurant(s)?|brasserie(s)?|bistrot|creperie|pizzeria|"
+        r"salon\s+de\s+(coiffure|beaute|massage|the)|"
+        r"coiffeur(se)?|coiffure|esthetique|institut\s+de\s+beaute|barbier|"
+        r"fleuriste(s)?|"
+        r"opticien(ne)?|optique\b|"
+        r"librairie|tabac|presse\s+(et\s+|du)|"
+        r"bijouterie|horlogerie|maroquinerie|"
+        r"chausseur|chaussures\s+(et\s+|du)|cordonnerie"
+        r")\b",
+        re.IGNORECASE,
+    ),
+
+    # Automobile, garage, transport
+    "automobile_transport": re.compile(
+        r"\b("
+        r"garage(s)?\s+(auto|de|du|des|d\s|peugeot|renault|citroen|ford|opel|fiat|volkswagen|toyota)|"
+        r"concessionnaire(s)?|carrosserie|mecanique\s+auto|"
+        r"auto[\s-]?ecole|moto[\s-]?ecole|"
+        r"controle\s+technique|station[\s-]service|"
+        r"pneus?\s+(et\s+|du|service)|depannage\s+auto|"
+        r"transport(s)?\s+(de|du|des|public(s)?|routier(s)?|express|en\s+commun|de\s+marchandises?)|"
+        r"taxi(s)?|vtc\b|deplacement(s)?"
+        r")\b",
+        re.IGNORECASE,
+    ),
+
+    # Santé / médical
+    "sante_medical": re.compile(
+        r"\b("
+        r"cabinet\s+(medical|dentaire|d\s?infirmier|de\s+kinesi|d\s?osteo|de\s+sage|de\s+psycholog)|"
+        r"medecin(s)?|dentiste(s)?|orthodontiste(s)?|"
+        r"infirmier(e|s|es)?\s+(libe|a\s+domicile)|kinesi(therapeute)?(s)?|"
+        r"osteopathe(s)?|psychologue(s)?|psychiatre(s)?|"
+        r"laboratoire\s+(d\s?analyses?|medical|de\s+biologie)|"
+        r"orthophoniste(s)?|orthoptiste(s)?|podologue(s)?|"
+        r"veterinaire(s)?|clinique\s+veterinaire"
+        r")\b",
+        re.IGNORECASE,
+    ),
+
+    # Finance, assurance, droit, comptabilité
+    "finance_droit": re.compile(
+        r"\b("
+        r"banque(s)?\s+(de|du|des|nationale|populaire|postale|cooperative)|"
+        r"credit\s+(agricole|mutuel|du\s+nord|lyonnais|cooperatif|maritime)|"
+        r"assurance(s)?\s+(maaf|matmut|axa|allianz|generali|de|du|des|mutuelle)|"
+        r"notaire(s)?|huissier(s)?|avocat(s|e|es)?|"
+        r"expert[\s-]comptable|cabinet\s+(comptable|d\s?avocats|d\s?expertise)|"
+        r"agence\s+(immobiliere|de\s+voyage|bancaire)|"
+        r"courtier(s)?|conseiller(s)?\s+financier(s)?"
+        r")\b",
+        re.IGNORECASE,
+    ),
+
+    # Divers très spécifiques (marques, produits)
+    "divers_specifique": re.compile(
+        r"\b("
+        r"piscines?\s+de\s+france|"
+        r"demenagement(s)?|location\s+(de\s+nacelles?|materiel|de\s+vehicules?)|"
+        r"beton\s+(imprime|pret|arme|decoratif)|"
+        r"valormat|dispano|natural\s+stone|lippi\b|artemat|"
+        r"ozae|garden\s+park\s+concept|aquagaia|esso\s+turquoise|"
+        r"centrale\s+(de\s+)?depannage|fls\b"
+        r")\b",
+        re.IGNORECASE,
+    ),
+}
+
+# ── EXCLUSIONS RACHETABLES par un mot positif (BTP, nettoyage) ─────────────
+# Une boîte de "menuiserie jardin" est probablement un vrai paysagiste, etc.
+EXCLUSION_SAUVABLES_PATTERNS: dict[str, re.Pattern] = {
+
+    "btp_construction": re.compile(
+        r"\b("
+        r"couvreur(s)?|toiture(s)?|"
+        r"maconnerie|renovation\s+construction|"
+        r"charpente(s)?|charpentier(s)?|"
+        r"etancheite|ravalement|"
+        r"facade(s)?|"
+        r"platrerie|carrelage|carreleur|"
+        r"peintre(\s+en\s+bat)?|peinture\s+(sarl|du|en|industriel)|"
+        r"menuiserie(s)?|menuisier(s)?|fermeture(s)?|veranda(s)?|pergola(s)?|"
+        r"electricite|electricien(ne)?|"
+        r"plomberie|plombier(s)?|"
+        r"chauffage(\s+sarl)?|isolation\s+(thermique|phonique|sarl)?"
+        r")\b",
+        re.IGNORECASE,
+    ),
+
+    "nettoyage_proprete": re.compile(
+        r"\b("
+        r"nettoyage\s+(professionnel|industriel|de\s+bureaux?|de\s+vitres?|tous?\s+services?)|"
+        r"entreprise\s+de\s+nettoyage|"
+        r"proprete(s)?\b|vitrerie|lavage(\s+|s\s)|"
+        r"pressing|blanchisserie|laverie|"
+        r"clinitex|isor|propnet|nikita\s+nettoyage|"
+        r"foltier|karl\s+nettoyage|cnet\s+nettoyage|clean\s+now|master\s+net|"
+        r"partenaire\s+service|edif[\s-]propre|activ[\s\']?clean|jon\s+net|"
+        r"maison\s+net|nhps|spid\s+anjou"
+        r")\b",
+        re.IGNORECASE,
+    ),
+}
+
+# Mots qui rachètent une exclusion sauvable
+SAUVETAGE_RE = re.compile(
+    r"\b(jardin(s|age)?|paysag(e|iste|isme)|elag(age|ueur)|espaces?\s+verts?)\b",
+    re.IGNORECASE,
 )
-
-# Mots qui "sauvent" un lead des exclusions conditionnelles (BTP/Nettoyage)
-MOTS_SAUVETAGE = ["jardin", "jardins", "paysage", "paysagiste", "elagage", "espace vert"]
 
 # ---------------------------------------------------------------------------
 # Codes NAF (niveau 3 — vérification en base)
@@ -281,6 +405,33 @@ def contient_un(texte: str, mots: list[str]) -> str | None:
             return m
     return None
 
+
+# Détection de scripts non-latins (cyrillique, arabe, hébreu, CJK, grec, etc.).
+# Un nom dont la majorité des caractères-lettres est non-latine n'est pas un
+# paysagiste français : à exclure d'office.
+_NON_LATIN_RE = re.compile(
+    r"[\u0370-\u03FF"   # Greek
+    r"\u0400-\u04FF"    # Cyrillic
+    r"\u0500-\u052F"    # Cyrillic supplement
+    r"\u0590-\u05FF"    # Hebrew
+    r"\u0600-\u06FF"    # Arabic
+    r"\u0700-\u074F"    # Syriac
+    r"\u0900-\u097F"    # Devanagari
+    r"\u3040-\u30FF"    # Hiragana + Katakana
+    r"\u3400-\u4DBF"    # CJK ext A
+    r"\u4E00-\u9FFF"    # CJK
+    r"\uAC00-\uD7AF"    # Hangul
+    r"]"
+)
+
+def script_non_latin(name: str) -> bool:
+    """True si la majorité des lettres du nom appartient à un script non-latin."""
+    letters = [c for c in name if c.isalpha()]
+    if not letters:
+        return False
+    non_latin = sum(1 for c in letters if _NON_LATIN_RE.match(c))
+    return non_latin >= max(1, len(letters) // 2)
+
 # ---------------------------------------------------------------------------
 # NIVEAU 1 & 2 — Classification locale
 # ---------------------------------------------------------------------------
@@ -289,38 +440,56 @@ def classifier_local(name: str) -> tuple[str | None, str]:
     """
     Retourne (decision, raison).
     decision : 'garder' | 'exclu' | None (ambigu → niveau 3)
+
+    Pipeline :
+      0a. script non-latin (cyrillique, arabe, CJK, …) → exclu
+      0b. franchise connue (substring littéral) → exclu
+      1.  mot paysagiste positif (regex GARDER_RE) → garder
+      1b. mot positif conditionnel (abattage + contexte) → garder
+      2.  pattern d'exclusion ferme (EXCLUSION_PATTERNS) → exclu
+      3.  pattern d'exclusion sauvable (BTP/nettoyage) → exclu sauf si
+          mot positif présent (sauvetage) → garder
+      4.  ambigu → None
     """
+    # ── 0a : script non-latin (testé sur le nom BRUT, avant normalisation) ──
+    if script_non_latin(name):
+        return "exclu", "script non-latin (pas un paysagiste FR)"
+
     n = normaliser(name)
 
-    # ── Priorité 0 : franchises connues (avant tout mot positif) ──
-    mot = contient_un(n, FRANCHISES)
+    # ── 0b : franchises et marques (substring littéral) ──
+    mot = contient_un(n, FRANCHISES_LITERAL)
     if mot:
         return "exclu", f"franchise: '{mot.strip()}'"
 
-    # ── Niveau 1 : mots paysagistes directs ──
-    mot = contient_un(n, MOTS_GARDER)
-    if mot:
-        return "garder", f"mot positif: '{mot}'"
+    # ── 1 : mots positifs (regex) ──
+    m = GARDER_RE.search(n)
+    if m:
+        return "garder", f"mot positif: '{m.group(0)}'"
 
-    # Mots conditionnels (ex: abattage seul ne suffit pas)
-    for mot_cond, mots_requis in MOTS_GARDER_CONDITIONNELS.items():
-        if mot_cond in n and contient_un(n, mots_requis):
-            return "garder", f"mot positif conditionnel: '{mot_cond}'"
+    # 1b. Mot positif conditionnel : "abattage" doit être combiné
+    if ABATTAGE_RE.search(n) and ABATTAGE_CONTEXT_RE.search(n):
+        return "garder", "mot positif conditionnel: 'abattage'"
 
-    # ── Niveau 2 : exclusions fermes sans condition ──
-    mot = contient_un(n, EXCLUSION_FERME)
-    if mot:
-        return "exclu", f"exclusion ferme: '{mot.strip()}'"
+    # ── 2 : exclusions fermes par catégorie ──
+    for categorie, pattern in EXCLUSION_PATTERNS.items():
+        m = pattern.search(n)
+        if m:
+            return "exclu", f"{categorie}: '{m.group(0).strip()}'"
 
-    # ── Niveau 2 : exclusions conditionnelles (sauf si mot jardin présent) ──
-    mot_excl = contient_un(n, EXCLUSION_SANS_JARDIN)
-    if mot_excl:
-        mot_salut = contient_un(n, MOTS_SAUVETAGE)
-        if mot_salut:
-            return "garder", f"mot positif '{mot_salut}' rachète exclusion '{mot_excl.strip()}'"
-        return "exclu", f"exclusion conditionnelle: '{mot_excl.strip()}'"
+    # ── 3 : exclusions rachetables par mot positif ──
+    for categorie, pattern in EXCLUSION_SAUVABLES_PATTERNS.items():
+        m = pattern.search(n)
+        if m:
+            sauvetage = SAUVETAGE_RE.search(n)
+            if sauvetage:
+                return "garder", (
+                    f"sauvetage '{sauvetage.group(0)}' "
+                    f"contre {categorie} '{m.group(0).strip()}'"
+                )
+            return "exclu", f"{categorie}: '{m.group(0).strip()}'"
 
-    # ── Niveau 3 : ambigu ──
+    # ── 4 : ambigu (sera tranché par le code NAF en base) ──
     return None, "ambigu"
 
 # ---------------------------------------------------------------------------

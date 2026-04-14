@@ -1,44 +1,37 @@
 """
-autonomous_loop.py — Boucle autonome CroustyLobster
+autonomous_loop.py — Boucle autonome Azor II
 Analyse la situation VAO toutes les heures et prend des décisions seul.
 Intégré dans scheduler_loop() de main.py.
 """
 
 import os, json, datetime, subprocess, re
-from pathlib import Path
-from dotenv import load_dotenv
-import anthropic
-from telegram import Bot
 
-load_dotenv("/opt/openclaw/.env")
+from core.shared import (
+    anthropic_client,
+    now_utc as _now_utc,
+    now_paris as _now_paris,
+    load_json as _load_json,
+    save_json as _save_json,
+    send as _send,
+    broadcast as _broadcast,
+    safe_reply as _reply,
+    authorized as _authorized,
+    escape_markdown as _esc,
+)
+from config import (
+    AUTONOMOUS_LOG_FILE, AUTONOMOUS_MODE_FILE,
+    JOURNAL_FILE, LONG_TERM_FILE, BUSINESS_FILE, ALERT_FILE,
+    API_VAO_URL, API_VAO_KEY,
+    MAX_ACTIONS_PER_DAY,
+    PIPELINE_VENV_PYTHON, SCRAPER_SCRIPT, ENRICH_SCRIPT, CLEAN_SCRIPT,
+    BOT_NAME,
+)
 
-BASE                 = Path("/opt/openclaw")
-AUTONOMOUS_LOG_FILE  = BASE / "memory/autonomous_log.json"
-AUTONOMOUS_MODE_FILE = BASE / "memory/autonomous_mode.json"
-JOURNAL_FILE         = BASE / "memory/journal.json"
-LONG_TERM_FILE       = BASE / "memory/long_term.json"
-BUSINESS_FILE        = BASE / "memory/business.json"
-ALERT_FILE           = BASE / "memory/alert_state.json"
+client = anthropic_client()
 
-BOT_TOKEN  = os.getenv("TELEGRAM_BOT_TOKEN")
-_CHAT_IDS  = [c for c in [os.getenv("TELEGRAM_CHAT_ID_1"), os.getenv("TELEGRAM_CHAT_ID_2")] if c]
-API_VAO_URL = os.getenv("API_VAO_URL", "https://178-104-104-36.sslip.io")
-API_VAO_KEY = os.getenv("API_VAO_KEY", "")
-
-client = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
-
-SCRAPER_CMD = [
-    "/opt/geo-leaad-fr-landscaping/.venv/bin/python",
-    "/opt/geo-leaad-fr-landscaping/scripts/scheduler.py",
-]
-ENRICH_CMD = [
-    "/opt/geo-leaad-fr-landscaping/.venv/bin/python",
-    "/opt/geo-leaad-fr-landscaping/scripts/enrich.py",
-]
-CLEAN_CMD = [
-    "/opt/geo-leaad-fr-landscaping/.venv/bin/python",
-    "/opt/geo-leaad-fr-landscaping/scripts/clean.py",
-]
+SCRAPER_CMD = [PIPELINE_VENV_PYTHON, SCRAPER_SCRIPT]
+ENRICH_CMD  = [PIPELINE_VENV_PYTHON, ENRICH_SCRIPT]
+CLEAN_CMD   = [PIPELINE_VENV_PYTHON, CLEAN_SCRIPT]
 
 # Pipeline scraper → enrich → clean
 PIPELINE_STAGES = [
@@ -46,36 +39,6 @@ PIPELINE_STAGES = [
     ("enrich",  ENRICH_CMD),
     ("clean",   CLEAN_CMD),
 ]
-
-MAX_ACTIONS_PER_DAY = 3
-
-
-# ─── HELPERS ──────────────────────────────────────────────────────────────────
-
-def _load_json(path: Path, default):
-    if path.exists():
-        try:
-            with open(path, encoding="utf-8") as f:
-                return json.load(f)
-        except Exception:
-            pass
-    return default
-
-def _save_json(path: Path, data):
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with open(path, "w", encoding="utf-8") as f:
-        json.dump(data, f, indent=2, ensure_ascii=False)
-
-def _now_utc() -> datetime.datetime:
-    return datetime.datetime.now(datetime.timezone.utc)
-
-def _now_paris() -> datetime.datetime:
-    return _now_utc().astimezone(datetime.timezone(datetime.timedelta(hours=2)))
-
-def _esc(s: str) -> str:
-    for ch in ["_", "*", "`", "["]:
-        s = str(s).replace(ch, f"\\{ch}")
-    return s
 
 
 # ─── MODE AUTONOME ────────────────────────────────────────────────────────────
@@ -159,6 +122,37 @@ def _pipeline_next_needed(from_stage: str, to_stage: str) -> bool:
         return True
     return to_started < from_finished  # to_stage a démarré avant la fin de from_stage
 
+def _detect_stale_starts(running_procs: dict):
+    """
+    Marque comme crashé tout stage 'started' depuis > 6h sans 'finished' et dont
+    le process n'est plus tracké. Cas typique : bot redémarré pendant un run,
+    le subprocess est mort mais alert_state garde le started orphelin.
+    """
+    alert = _load_json(ALERT_FILE, {})
+    changed = False
+    for stage, _ in PIPELINE_STAGES:
+        started  = alert.get(f"last_{stage}_started")
+        finished = alert.get(f"last_{stage}_finished")
+        if not started or finished:
+            continue
+        proc = running_procs.get(stage)
+        if proc is not None and proc.poll() is None:
+            continue  # encore vivant, légitime
+        try:
+            started_dt = datetime.datetime.fromisoformat(started)
+            age_h = (_now_utc() - started_dt).total_seconds() / 3600
+        except Exception:
+            continue
+        if age_h < 6:
+            continue
+        alert[f"last_{stage}_finished"]  = _now_utc().isoformat()
+        alert[f"last_{stage}_exit_code"] = -1  # exit inconnu (crashé / tué pendant restart)
+        changed = True
+        print(f"[PIPELINE] Stage {stage} marqué crashé (started il y a {age_h:.1f}h sans finished, proc absent)")
+    if changed:
+        _save_json(ALERT_FILE, alert)
+
+
 async def pipeline_advance(running_procs: dict) -> bool:
     """
     Vérifie si un stage du pipeline vient de terminer et lance le suivant.
@@ -166,6 +160,8 @@ async def pipeline_advance(running_procs: dict) -> bool:
     Couvre aussi le cas post-restart (proc non tracké mais alert_state à jour).
     Retourne True si une action a été prise.
     """
+    # Nettoie les starts orphelins (proc mort sans avoir enregistré finished)
+    _detect_stale_starts(running_procs)
     # Synchronise l'état depuis business.json (évite faux "jamais lancé")
     _sync_pipeline_state_from_business()
 
@@ -269,57 +265,6 @@ def count_actions_today() -> int:
         and e.get("action") not in ("ATTENDRE", "ALERTER")
         and not e.get("result", "").startswith("ANNULÉE")
     )
-
-
-# ─── TELEGRAM ─────────────────────────────────────────────────────────────────
-
-_TG_MAX = 4096
-
-def _split_text(text: str, limit: int = _TG_MAX) -> list:
-    if len(text) <= limit:
-        return [text]
-    parts = []
-    while text:
-        if len(text) <= limit:
-            parts.append(text)
-            break
-        cut = text.rfind("\n", 0, limit)
-        if cut <= 0:
-            cut = limit
-        parts.append(text[:cut])
-        text = text[cut:].lstrip("\n")
-    return parts
-
-
-async def _send(chat_id: str, text: str):
-    bot = Bot(token=BOT_TOKEN)
-    for part in _split_text(text):
-        try:
-            await bot.send_message(chat_id=chat_id, text=part, parse_mode="Markdown")
-        except Exception:
-            clean = re.sub(r'[*_`\[\]]', '', part)
-            try:
-                await bot.send_message(chat_id=chat_id, text=clean)
-            except Exception:
-                pass
-
-async def _broadcast(text: str):
-    for cid in _CHAT_IDS:
-        await _send(cid, text)
-
-async def _reply(update, text: str):
-    for part in _split_text(text):
-        try:
-            await update.message.reply_text(part, parse_mode="Markdown")
-        except Exception:
-            clean = re.sub(r'[*_`\[\]\\]', '', part)
-            try:
-                await update.message.reply_text(clean)
-            except Exception:
-                pass
-
-def _authorized(update) -> bool:
-    return str(update.effective_chat.id) in _CHAT_IDS
 
 
 # ─── CONTEXTE ─────────────────────────────────────────────────────────────────
@@ -457,7 +402,7 @@ async def analyze_and_decide(any_agent_running: bool = False) -> dict:
     context = _build_context(any_agent_running)
     actions_remaining = MAX_ACTIONS_PER_DAY - count_actions_today()
 
-    prompt = f"""Tu es CroustyLobster, IA co-fondatrice de VAO (SaaS devis paysagistes).
+    prompt = f"""Tu es {BOT_NAME}, IA co-fondatrice de VAO (SaaS devis paysagistes).
 Tu tournes en mode autonome. Tu es le MANAGER du pipeline de leads : scraper → enrichir → nettoyer.
 Le pipeline avance automatiquement entre les étapes — tu n'as PAS besoin de relancer une étape qui vient de terminer normalement.
 
@@ -469,7 +414,7 @@ RÈGLES ANTI-FAUSSES-ALERTES (PRIORITAIRES) :
 - Si enrichis > 0 → l'enrichissement a déjà tourné. NE PAS alerter à ce sujet.
 - "jamais lancé dans cette session" = le bot vient de redémarrer, pas que le scraper n'a jamais tourné.
 - Si leads_total > 1000, ne JAMAIS choisir ALERTER pour motif lié au scraper ou à l'infra.
-- L'état actuel avec 21 811 leads est l'état NORMAL et SAIN du projet.
+- Si leads_total > 1000, la base est dans un état NORMAL et SAIN. Ne jamais alerter à ce sujet.
 
 IMPORTANT sur le pipeline :
 - Si un stage affiche "terminé normalement" → c'est NORMAL, l'infra n'est PAS bloquée.
@@ -624,20 +569,14 @@ async def daily_autonomous_report():
     )
     context = _build_context()
 
-    prompt = f"""Tu es CroustyLobster. Voici tes actions autonomes d'aujourd'hui :
+    prompt = f"""Tu es {BOT_NAME}. Voici tes actions autonomes d'aujourd'hui :
 
 {actions_text}
 
 Contexte actuel :
 {context}
 
-Génère un rapport quotidien (5-8 lignes) au format EXACT :
-"Aujourd'hui j'ai :
-- [liste des actions prises et observations]
-
-Demain je prévois de : [action planifiée et pourquoi, en 1-2 phrases]"
-
-Direct, factuel, en français, tutoie les fondateurs."""
+Raconte brièvement à Quentin ce que tu as fait aujourd'hui et ce que tu prévois pour demain. Direct, factuel, en français, tutoie. Pas de titres, pas de listes à puces forcées, format libre."""
 
     try:
         resp = client.messages.create(
@@ -649,7 +588,7 @@ Direct, factuel, en français, tutoie les fondateurs."""
     except Exception:
         report = "Rapport automatique :\n" + actions_text
 
-    await _broadcast(f"📊 *Rapport autonome — {today}*\n\n{report}")
+    await _broadcast(report)
 
 
 # ─── TICK HORAIRE ─────────────────────────────────────────────────────────────
@@ -792,7 +731,7 @@ async def cmd_plan(update, context):
         for e in log[-5:]
     ) or "Aucune action récente."
 
-    prompt = f"""Tu es CroustyLobster. Un fondateur te demande ce que tu prévois de faire demain en mode autonome.
+    prompt = f"""Tu es {BOT_NAME}. Un fondateur te demande ce que tu prévois de faire demain en mode autonome.
 
 Contexte actuel :
 {context_text}

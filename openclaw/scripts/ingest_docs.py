@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 """
-ingest_docs.py — Ingestion des PDFs de cours dans la knowledge base RAG.
+ingest_docs.py — Ingestion des PDFs et TXT de cours dans la knowledge base RAG.
 
 Usage :
     /opt/openclaw/venv/bin/python /opt/openclaw/scripts/ingest_docs.py
 
-Lit tous les PDFs de /opt/openclaw/docs/
+Lit tous les PDFs et TXT de /opt/openclaw/docs/
 → découpe en chunks de 500 mots (overlap 50)
 → sauvegarde dans /opt/openclaw/memory/knowledge_base.json
 """
@@ -24,15 +24,25 @@ CHUNK_SIZE = 500   # mots
 OVERLAP    = 50    # mots
 
 
-def extract_text(pdf_path: Path) -> str:
-    """Extrait tout le texte d'un PDF."""
-    text_parts = []
-    with pdfplumber.open(pdf_path) as pdf:
-        for page in pdf.pages:
-            t = page.extract_text()
-            if t:
-                text_parts.append(t)
-    return "\n".join(text_parts)
+def extract_text(file_path: Path) -> str:
+    """Extrait tout le texte d'un PDF ou TXT."""
+    if file_path.suffix.lower() == ".pdf":
+        try:
+            text_parts = []
+            with pdfplumber.open(file_path) as pdf:
+                for page in pdf.pages:
+                    t = page.extract_text()
+                    if t:
+                        text_parts.append(t)
+            return "\n".join(text_parts)
+        except Exception:
+            pass  # PDF invalide — on tente en texte brut ci-dessous
+    for enc in ("utf-8", "utf-8-sig", "latin-1"):
+        try:
+            return file_path.read_text(encoding=enc)
+        except (UnicodeDecodeError, ValueError):
+            continue
+    return ""
 
 
 def make_chunks(text: str, source: str) -> list[dict]:
@@ -71,9 +81,12 @@ def load_existing_sources() -> set[str]:
 
 
 def main():
-    pdfs = sorted(DOCS_DIR.rglob("*.pdf"))
-    if not pdfs:
-        print(f"Aucun PDF trouvé dans {DOCS_DIR} (ni ses sous-dossiers)")
+    docs = sorted(
+        f for f in DOCS_DIR.rglob("*")
+        if f.suffix.lower() in (".pdf", ".txt")
+    )
+    if not docs:
+        print(f"Aucun PDF/TXT trouvé dans {DOCS_DIR} (ni ses sous-dossiers)")
         return
 
     existing_sources = load_existing_sources()
@@ -91,23 +104,26 @@ def main():
 
     new_chunks: list[dict] = []
     skipped = 0
-    for pdf in pdfs:
-        source = pdf.stem
+    for doc in docs:
+        source = doc.stem
         if source in existing_sources:
             skipped += 1
             continue
-        print(f"  Nouveau : {pdf.name}")
+        print(f"  Nouveau : {doc.name}")
         try:
-            text = extract_text(pdf)
+            text = extract_text(doc)
         except Exception as e:
             print(f"    ✗ Erreur lecture : {e}")
+            continue
+        if not text.strip():
+            print(f"    ✗ Aucun texte extrait")
             continue
         chunks = make_chunks(text, source)
         print(f"    → {len(chunks)} chunks")
         new_chunks.extend(chunks)
 
     if skipped:
-        print(f"  (ignorés — déjà ingérés : {skipped} PDF(s))")
+        print(f"  (ignorés — déjà ingérés : {skipped} fichier(s))")
 
     if not new_chunks:
         print(f"\n✅ Rien de nouveau à ingérer ({len(existing_chunks)} chunks existants).")

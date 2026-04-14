@@ -538,7 +538,8 @@ async def run(dept_filter: str | None, limit: int | None, dry_run: bool, delay: 
     if not total:
         log.info("Aucun lead à enrichir.")
         await conn.close()
-        return
+        log.info("Enrichissement terminé, arrêt propre")
+        sys.exit(0)
 
     prefix = "[DRY-RUN] " if dry_run else ""
     log.info("%s>> %d leads à enrichir (societe.com → API fallback)", prefix, total)
@@ -665,6 +666,9 @@ async def run(dept_filter: str | None, limit: int | None, dry_run: bool, delay: 
     if dry_run:
         print("  (dry-run — aucune écriture en base)")
     print(f"{'─' * 60}\n")
+
+    log.info("Enrichissement terminé, arrêt propre")
+    sys.exit(0)
 
 
 def main():

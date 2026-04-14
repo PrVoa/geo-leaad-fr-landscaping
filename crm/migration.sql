@@ -94,8 +94,11 @@ CREATE INDEX IF NOT EXISTS idx_landscapers_type_activite ON landscapers(type_act
 -- ============================================================
 
 -- Normaliser les anciens statuts avant d'appliquer la contrainte
-UPDATE landscapers SET statut = 'a_ferme'         WHERE statut = 'exclu';
-UPDATE landscapers SET statut = 'hors_cible'      WHERE statut IN ('ferme','trop_tot','pas_encore_approche');
+-- NB : 'exclu' était l'ancien label posé par clean_leads pour les hors-cible.
+-- 'ferme' était l'ancien label pour les sociétés radiées (a_ferme).
+UPDATE landscapers SET statut = 'hors_cible'      WHERE statut = 'exclu';
+UPDATE landscapers SET statut = 'a_ferme'         WHERE statut = 'ferme';
+UPDATE landscapers SET statut = 'hors_cible'      WHERE statut IN ('trop_tot','pas_encore_approche');
 UPDATE landscapers SET statut = 'contacte'        WHERE statut IN ('a_contacter','premier_message');
 UPDATE landscapers SET statut = 'en_discussion'   WHERE statut IN ('demo_planifiee','demo_faite');
 UPDATE landscapers SET statut = 'solution_envoyee' WHERE statut = 'offre_envoyee';
