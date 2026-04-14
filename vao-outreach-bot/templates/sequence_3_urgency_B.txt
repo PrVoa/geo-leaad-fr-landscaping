@@ -1,0 +1,11 @@
+Bonjour {prenom},
+
+Dernier point pour {nom_entreprise}.
+
+Avec l'obligation de facturation électronique qui arrive, les paysagistes qui n'ont pas encore d'outil de devis/facturation vont devoir s'équiper rapidement.
+
+VAO a été conçu spécifiquement pour les paysagistes : devis en 5 min, factures conformes, tout depuis le téléphone.
+
+Vous voulez tester avant que ça devienne urgent ?
+
+Quentin — VAO · {phone}

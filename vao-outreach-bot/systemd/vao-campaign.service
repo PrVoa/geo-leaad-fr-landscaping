@@ -1,0 +1,16 @@
+[Unit]
+Description=VAO Campaign Daily Send
+After=network.target
+
+[Service]
+Type=oneshot
+User=claude
+WorkingDirectory=/home/claude/vao-outreach-bot
+EnvironmentFile=/home/claude/vao-outreach-bot/.env
+ExecStart=/usr/bin/python3 scripts/run_campaign.py
+TimeoutStartSec=7200
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

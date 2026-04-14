@@ -1,0 +1,11 @@
+Bonjour {prenom},
+
+Dernier message pour {nom_entreprise}, promis.
+
+La facturation électronique devient obligatoire en 2026 pour toutes les entreprises. Beaucoup de paysagistes indépendants ne sont pas encore équipés.
+
+VAO permet déjà de créer des devis ET des factures conformes, directement depuis le téléphone. Autant s'y mettre maintenant plutôt que de courir au dernier moment.
+
+Je vous envoie un accès gratuit 14 jours ?
+
+Quentin — VAO · {phone}

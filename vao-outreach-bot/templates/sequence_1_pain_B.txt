@@ -1,0 +1,11 @@
+Bonjour {prenom},
+
+Je suis tombé sur les réalisations de {nom_entreprise} à {ville} — beau travail.
+
+Question rapide : vous passez combien de temps par semaine sur vos devis et factures ? Les paysagistes qu'on accompagne nous disaient 4 à 5 heures, souvent le soir.
+
+VAO permet de créer un devis depuis votre téléphone en 5 minutes, entre deux chantiers.
+
+Vous voulez tester gratuitement 14 jours ?
+
+Quentin — VAO · {phone}

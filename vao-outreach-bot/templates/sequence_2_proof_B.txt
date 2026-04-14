@@ -1,0 +1,11 @@
+Bonjour {prenom},
+
+Je reviens vers vous à propos de la gestion de devis chez {nom_entreprise}.
+
+Un paysagiste de {region} m'a dit récemment : "Avant, je passais mes dimanches soirs sur les devis. Maintenant je les fais sur le chantier en 5 min."
+
+C'est exactement ce que permet VAO — devis pro depuis le téléphone, envoi direct au client.
+
+Vous voulez essayer gratuitement ?
+
+Quentin — VAO · {phone}

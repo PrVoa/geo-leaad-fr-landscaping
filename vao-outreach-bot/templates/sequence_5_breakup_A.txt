@@ -1,0 +1,12 @@
+Bonjour {prenom},
+
+Je ne vais pas vous embêter plus longtemps.
+
+Si la gestion de devis n'est pas un sujet pour {nom_entreprise} en ce moment, aucun souci.
+
+Si un jour ça le devient, VAO sera toujours là : https://app.vao-solution.com
+
+Bonne continuation et bonne saison.
+
+Quentin — VAO
+{phone}

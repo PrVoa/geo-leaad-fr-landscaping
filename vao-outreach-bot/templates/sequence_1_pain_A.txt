@@ -1,0 +1,11 @@
+Bonjour {prenom},
+
+En regardant votre site, j'ai vu que {nom_entreprise} faisait de la {activite_principale} à {ville}.
+
+Je suppose que comme la plupart des paysagistes indépendants, vos devis se font le soir après le chantier. C'est le retour qu'on a de tous les pros du secteur.
+
+On a créé une appli qui permet de faire un devis pro en 5 min directement depuis le terrain, sur votre téléphone.
+
+Je peux vous envoyer un accès gratuit pour tester ?
+
+Quentin — VAO · {phone}

@@ -1,0 +1,15 @@
+[Unit]
+Description=VAO Response Checker
+After=network.target
+
+[Service]
+Type=simple
+User=claude
+WorkingDirectory=/home/claude/vao-outreach-bot
+EnvironmentFile=/home/claude/vao-outreach-bot/.env
+ExecStart=/usr/bin/python3 scripts/run_response_check.py --loop --interval=1800
+Restart=always
+RestartSec=60
+
+[Install]
+WantedBy=multi-user.target

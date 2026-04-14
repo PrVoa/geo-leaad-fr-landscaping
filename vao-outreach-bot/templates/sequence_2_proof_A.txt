@@ -1,0 +1,11 @@
+Bonjour {prenom},
+
+Un message rapide pour {nom_entreprise}.
+
+Des paysagistes de {region} qui avaient le même problème de devis chronophages ont essayé notre outil.
+
+Le retour le plus fréquent : ils ont divisé par 5 le temps passé sur leurs devis. Certains le font maintenant directement chez le client, pendant la visite.
+
+Je peux vous montrer comment ça marche en 2 min ?
+
+Quentin — VAO · {phone}

@@ -1,0 +1,11 @@
+playwright==1.49.1
+beautifulsoup4==4.12.3
+httpx==0.27.2
+supabase==2.11.0
+python-dotenv==1.0.1
+openai==1.58.1
+resend==2.5.0
+imapclient==3.0.1
+pydantic==2.10.3
+rich==13.9.4
+tenacity==9.0.0

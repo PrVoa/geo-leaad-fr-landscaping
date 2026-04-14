@@ -1,0 +1,10 @@
+Bonjour {prenom},
+
+Je vous avais contacté via votre site il y a quelques semaines à propos de la gestion de devis.
+
+J'ai préparé un modèle de devis spécifique pour les paysagistes qui font de la {activite_principale}. C'est le format le plus utilisé par nos utilisateurs, avec les postes de dépense déjà pré-remplis.
+
+Je peux vous l'envoyer ? C'est gratuit et sans engagement.
+
+Quentin — VAO
+{phone}
