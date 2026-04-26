@@ -115,3 +115,24 @@ ALTER TABLE landscapers ADD CONSTRAINT landscapers_statut_check CHECK (statut IN
   'contacte', 'en_discussion', 'solution_envoyee', 'relance_essai', 'accompagne', 'gagne',
   'perdu', 'pas_interesse', 'sans_suite', 'hors_cible', 'a_ferme'
 ));
+
+-- ============================================================
+-- Migration Appels — Journal d'appels de prospection
+-- ============================================================
+
+ALTER TABLE landscapers
+  ADD COLUMN IF NOT EXISTS appels_horodates   JSONB        DEFAULT '[]'::jsonb,
+  ADD COLUMN IF NOT EXISTS nb_tentatives      INTEGER      DEFAULT 0,
+  ADD COLUMN IF NOT EXISTS premier_repondu_at TIMESTAMPTZ,
+  ADD COLUMN IF NOT EXISTS dernier_contact_at TIMESTAMPTZ;
+
+-- Format d'une entrée dans appels_horodates :
+-- { "type": "répondu" | "sans_réponse",
+--   "ts": "2026-04-26T14:32:00Z",
+--   "note": "...",
+--   "interet": "chaud" | "tiede" | "froid" | null,
+--   "duree_min": 5 }
+
+CREATE INDEX IF NOT EXISTS idx_landscapers_premier_repondu_at ON landscapers(premier_repondu_at);
+CREATE INDEX IF NOT EXISTS idx_landscapers_dernier_contact_at ON landscapers(dernier_contact_at DESC);
+CREATE INDEX IF NOT EXISTS idx_landscapers_nb_tentatives      ON landscapers(nb_tentatives);

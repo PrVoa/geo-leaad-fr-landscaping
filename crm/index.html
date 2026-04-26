@@ -3,284 +3,933 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>CRM Paysagistes — Geo-Leaad</title>
+<title>CRM Appels — Geo-Leaad</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
 <style>
-  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-
   :root {
-    --bg: #f4f6f9;
-    --card: #ffffff;
-    --border: #e2e8f0;
-    --text: #1a202c;
-    --muted: #718096;
-    --primary: #3b82f6;
-    --danger: #ef4444;
-    --s-nouveau:          #94a3b8;
-    --s-contacte:         #3b82f6;
-    --s-en_discussion:    #f97316;
-    --s-solution_envoyee: #84cc16;
-    --s-relance_essai:    #a855f7;
-    --s-accompagne:       #06b6d4;
-    --s-gagne:            #22c55e;
-    --s-perdu:            #ef4444;
-    --s-pas_interesse:    #f43f5e;
-    --s-sans_suite:       #6b7280;
-    --s-hors_cible:       #64748b;
-    --s-a_ferme:          #475569;
+    --bg:        #0d1117;
+    --panel:     #161b22;
+    --panel-2:   #1c2230;
+    --panel-3:   #232a38;
+    --border:    #2a3441;
+    --border-2:  #1f2733;
+    --text:      #e6edf3;
+    --muted:     #8b949e;
+    --muted-2:   #6e7681;
+    --primary:   #58a6ff;
+    --primary-d: #1f6feb;
+    --success:   #3fb950;
+    --success-d: #238636;
+    --danger:    #f85149;
+    --danger-d:  #da3633;
+    --warning:   #d29922;
+    --warning-d: #9e6a03;
+    --info:      #79c0ff;
+    --hot:       #ff7b72;
+    --warm:      #ffa657;
+    --cold:      #79c0ff;
   }
 
-  body { font-family: 'Segoe UI', system-ui, sans-serif; background: var(--bg); color: var(--text); }
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  html, body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', sans-serif;
+    font-size: 14px;
+    -webkit-font-smoothing: antialiased;
+    line-height: 1.45;
+  }
+
+  button { font: inherit; color: inherit; }
+  input, select, textarea { font: inherit; }
+  a { color: var(--primary); text-decoration: none; }
+  a:hover { text-decoration: underline; }
 
   /* ── HEADER ── */
   header {
-    background: var(--card);
+    background: var(--panel);
     border-bottom: 1px solid var(--border);
     padding: 12px 24px;
     display: flex;
     align-items: center;
-    gap: 16px;
-    flex-wrap: wrap;
+    gap: 24px;
     position: sticky;
     top: 0;
     z-index: 100;
   }
-  header h1 { font-size: 1.1rem; font-weight: 700; flex-shrink: 0; }
-  .stats-bar { display: flex; gap: 10px; flex-wrap: wrap; }
-  .stat-chip {
-    font-size: .75rem;
-    padding: 3px 10px;
-    border-radius: 999px;
-    font-weight: 600;
-    border: 1px solid transparent;
-    cursor: pointer;
+  header h1 {
+    font-size: 1rem;
+    font-weight: 700;
+    background: linear-gradient(135deg, #58a6ff, #3fb950);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
   }
-  .stat-chip.total            { background: #e2e8f0; color: #475569; }
-  .stat-chip.today            { background: #dbeafe; color: #1d4ed8; }
-  .stat-chip.contacte         { background: #eff6ff; color: #1d4ed8;  border-color: var(--s-contacte); }
-  .stat-chip.en_discussion    { background: #fff7ed; color: #c2410c;  border-color: var(--s-en_discussion); }
-  .stat-chip.solution_envoyee { background: #f7fee7; color: #3f6212;  border-color: var(--s-solution_envoyee); }
-  .stat-chip.gagne            { background: #f0fdf4; color: #15803d;  border-color: var(--s-gagne); }
-  .stat-chip.perdu            { background: #fef2f2; color: #b91c1c;  border-color: var(--s-perdu); }
-  .stat-chip.hors_cible       { background: #f1f5f9; color: #334155;  border-color: var(--s-hors_cible); }
+  .tabs { display: flex; gap: 4px; }
+  .tab-btn {
+    background: none;
+    border: none;
+    padding: 6px 14px;
+    border-radius: 6px;
+    color: var(--muted);
+    cursor: pointer;
+    font-weight: 500;
+    font-size: .88rem;
+    transition: all .15s;
+  }
+  .tab-btn:hover { color: var(--text); background: var(--panel-2); }
+  .tab-btn.active { color: var(--text); background: var(--panel-3); }
 
+  #user-info { display: flex; align-items: center; gap: 12px; margin-left: auto; }
+  #user-name { font-size: .82rem; color: var(--muted); }
   #realtime-dot {
     width: 8px; height: 8px; border-radius: 50%;
-    background: #94a3b8; flex-shrink: 0;
-    transition: background .4s;
+    background: var(--muted-2);
+    transition: background .4s, box-shadow .4s;
   }
-  #realtime-dot.connected { background: #22c55e; }
-
-  #user-info { display: flex; align-items: center; gap: 10px; margin-left: auto; flex-shrink: 0; }
-  #user-name { font-size: .82rem; color: var(--muted); font-weight: 500; }
+  #realtime-dot.connected {
+    background: var(--success);
+    box-shadow: 0 0 8px rgba(63, 185, 80, .5);
+  }
   #btn-logout {
-    font-size: .78rem; background: none; border: 1px solid var(--border);
-    border-radius: 6px; padding: 4px 10px; cursor: pointer; color: var(--muted); transition: all .15s;
+    font-size: .78rem;
+    background: none;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 5px 12px;
+    cursor: pointer;
+    color: var(--muted);
+    transition: all .15s;
   }
-  #btn-logout:hover { background: #fef2f2; border-color: var(--danger); color: var(--danger); }
+  #btn-logout:hover { background: rgba(248, 81, 73, .1); border-color: var(--danger); color: var(--danger); }
+
+  /* ── VIEWS ── */
+  .view { display: none; }
+  .view.active { display: block; }
 
   /* ── FILTRES ── */
   #filters {
-    background: var(--card);
+    background: var(--panel);
     border-bottom: 1px solid var(--border);
-    padding: 10px 24px;
+    padding: 12px 24px;
     display: flex;
-    gap: 8px;
+    gap: 10px;
     flex-wrap: wrap;
     align-items: center;
   }
-  #filters input[type=search], #filters input[type=text], #filters select {
-    border: 1px solid var(--border); border-radius: 6px; padding: 5px 10px;
-    font-size: .82rem; background: var(--bg); color: var(--text); outline: none; transition: border-color .2s;
+  #search {
+    flex: 1;
+    min-width: 240px;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 8px 14px;
+    color: var(--text);
+    outline: none;
+    transition: border-color .15s, box-shadow .15s;
   }
-  #filters input:focus, #filters select:focus { border-color: var(--primary); }
-  #search { min-width: 200px; }
+  #search:focus {
+    border-color: var(--primary);
+    box-shadow: 0 0 0 3px rgba(88, 166, 255, .15);
+  }
+  #search::placeholder { color: var(--muted-2); }
 
-  .filter-check {
-    display: flex; align-items: center; gap: 5px;
-    font-size: .82rem; color: var(--muted); cursor: pointer; white-space: nowrap;
+  .quick-filters { display: flex; gap: 6px; flex-wrap: wrap; }
+  .qf-chip {
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    padding: 6px 14px;
+    cursor: pointer;
+    font-size: .82rem;
+    color: var(--muted);
+    font-weight: 500;
+    transition: all .15s;
+    white-space: nowrap;
   }
-  .filter-check input { cursor: pointer; accent-color: var(--primary); }
-
-  .filters-right { display: flex; gap: 8px; margin-left: auto; align-items: center; }
-  #btn-export {
-    font-size: .8rem; background: #f0fdf4; border: 1px solid #86efac;
-    border-radius: 6px; padding: 5px 12px; cursor: pointer; color: #15803d; font-weight: 600; transition: all .15s;
+  .qf-chip:hover { color: var(--text); border-color: var(--muted-2); }
+  .qf-chip.active {
+    color: var(--text);
+    background: var(--panel-3);
+    border-color: var(--primary);
   }
-  #btn-export:hover { background: #dcfce7; }
-  #btn-reset {
-    font-size: .8rem; color: var(--muted); cursor: pointer;
-    background: none; border: none; padding: 4px 8px; border-radius: 4px;
+  .qf-chip .qf-count {
+    margin-left: 6px;
+    font-size: .72rem;
+    color: var(--muted-2);
+    font-weight: 600;
   }
-  #btn-reset:hover { background: var(--border); }
-
-  /* ── BULK BAR ── */
-  #bulk-bar {
-    display: none; align-items: center; gap: 12px;
-    background: #1d4ed8; color: white;
-    padding: 9px 24px; font-size: .85rem;
-  }
-  #bulk-bar.visible { display: flex; }
-  #bulk-count { font-weight: 700; }
-  .bulk-btn {
-    background: rgba(255,255,255,.2); border: 1px solid rgba(255,255,255,.4);
-    border-radius: 6px; padding: 4px 12px; cursor: pointer; color: white;
-    font-size: .8rem; transition: background .15s;
-  }
-  .bulk-btn:hover { background: rgba(255,255,255,.35); }
-  #bulk-cancel { background: none; border: none; color: rgba(255,255,255,.7); cursor: pointer; margin-left: auto; font-size: .8rem; }
+  .qf-chip.active .qf-count { color: var(--primary); }
+  .qf-chip[data-qf="repondu"].active     { border-color: var(--success); }
+  .qf-chip[data-qf="repondu"].active .qf-count     { color: var(--success); }
+  .qf-chip[data-qf="sans_reponse"].active { border-color: var(--danger); }
+  .qf-chip[data-qf="sans_reponse"].active .qf-count { color: var(--danger); }
+  .qf-chip[data-qf="rappel"].active      { border-color: var(--warning); }
+  .qf-chip[data-qf="rappel"].active .qf-count      { color: var(--warning); }
+  .qf-chip[data-qf="interesse"].active   { border-color: var(--success); }
+  .qf-chip[data-qf="interesse"].active .qf-count   { color: var(--success); }
+  .qf-chip[data-qf="pas_interesse"].active { border-color: var(--danger); }
+  .qf-chip[data-qf="pas_interesse"].active .qf-count { color: var(--danger); }
 
   /* ── TABLE ── */
-  #wrap { padding: 16px 24px; overflow-x: auto; }
-  table { width: 100%; border-collapse: collapse; font-size: .82rem; }
+  #wrap {
+    padding: 16px 24px 8px;
+    overflow-x: auto;
+  }
+  table {
+    width: 100%;
+    border-collapse: separate;
+    border-spacing: 0;
+    background: var(--panel);
+    border-radius: 10px;
+    overflow: hidden;
+  }
   thead th {
-    background: var(--card); border-bottom: 2px solid var(--border);
-    padding: 9px 10px; text-align: left; font-weight: 600;
-    color: var(--muted); white-space: nowrap;
+    background: var(--panel-2);
+    border-bottom: 1px solid var(--border);
+    padding: 11px 14px;
+    text-align: left;
+    font-weight: 600;
+    color: var(--muted);
+    font-size: .76rem;
+    text-transform: uppercase;
+    letter-spacing: .04em;
+    white-space: nowrap;
   }
-  thead th.sortable { cursor: pointer; user-select: none; }
-  thead th.sortable:hover { color: var(--text); }
-  thead th.sort-asc::after  { content: ' ↑'; color: var(--primary); }
-  thead th.sort-desc::after { content: ' ↓'; color: var(--primary); }
+  tbody tr {
+    border-bottom: 1px solid var(--border-2);
+    transition: background .12s;
+  }
+  tbody tr:hover { background: var(--panel-2); }
+  tbody tr:last-child { border-bottom: none; }
+  tbody td {
+    padding: 12px 14px;
+    vertical-align: middle;
+  }
 
-  tbody tr { border-bottom: 1px solid var(--border); background: var(--card); transition: background .1s; }
-  tbody tr:hover { background: #f8fafc; }
-  tbody tr.selected { background: #eff6ff; }
-  tbody td { padding: 8px 10px; vertical-align: top; }
+  .col-name    { font-weight: 600; min-width: 180px; }
+  .col-gerant  { color: var(--muted); min-width: 130px; }
+  .col-ville   { color: var(--muted); min-width: 110px; }
+  .col-statut  { width: 130px; }
+  .col-action  { color: var(--muted-2); font-size: .8rem; min-width: 130px; white-space: nowrap; }
+  .col-actions { width: 240px; text-align: right; white-space: nowrap; }
 
-  .col-check  { width: 32px; text-align: center; }
-  .col-dept   { text-align: center; width: 44px; }
-  .col-name   { min-width: 150px; font-weight: 600; }
-  .col-ville  { min-width: 110px; color: var(--muted); font-size: .8rem; }
-  .col-phone  { white-space: nowrap; }
-  .col-email  { min-width: 160px; font-size: .78rem; word-break: break-all; }
-  .col-rating { text-align: center; width: 70px; white-space: nowrap; }
-  .col-status { width: 110px; }
-  .col-notes  { min-width: 180px; }
-  .col-recall { width: 120px; }
-  .col-links  { white-space: nowrap; }
+  .sub-line {
+    font-size: .75rem;
+    color: var(--muted-2);
+    margin-top: 2px;
+    font-weight: normal;
+  }
 
-  input[type=checkbox] { cursor: pointer; accent-color: var(--primary); width: 14px; height: 14px; }
-
-  a { color: var(--primary); text-decoration: none; }
-  a:hover { text-decoration: underline; }
-
-  /* ── BADGES STATUT ── */
+  /* ── BADGES STATUT (dérivés) ── */
   .badge {
-    display: inline-block; padding: 2px 9px; border-radius: 999px;
-    font-size: .73rem; font-weight: 600; cursor: pointer; user-select: none; white-space: nowrap;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 4px 10px;
+    border-radius: 999px;
+    font-size: .74rem;
+    font-weight: 600;
+    border: 1px solid transparent;
+    white-space: nowrap;
   }
-  .badge.nouveau            { background: #f1f5f9; color: #475569; }
-  .badge.contacte           { background: #eff6ff; color: #1d4ed8; }
-  .badge.en_discussion      { background: #fff7ed; color: #c2410c; }
-  .badge.solution_envoyee   { background: #f7fee7; color: #3f6212; }
-  .badge.relance_essai      { background: #faf5ff; color: #6b21a8; }
-  .badge.accompagne         { background: #ecfeff; color: #0e7490; }
-  .badge.gagne              { background: #f0fdf4; color: #15803d; }
-  .badge.perdu              { background: #fef2f2; color: #b91c1c; }
-  .badge.pas_interesse      { background: #fff1f2; color: #9f1239; }
-  .badge.sans_suite         { background: #f9fafb; color: #4b5563; }
-  .badge.hors_cible         { background: #f1f5f9; color: #334155; }
-  .badge.a_ferme            { background: #f8fafc; color: #1e293b; }
+  .badge::before {
+    content: '';
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: currentColor;
+  }
+  .badge.b-call         { background: rgba(139, 148, 158, .12); color: var(--muted); }
+  .badge.b-answered     { background: rgba(63, 185, 80, .12);   color: var(--success); }
+  .badge.b-no-answer    { background: rgba(248, 81, 73, .12);   color: var(--danger); }
+  .badge.b-callback     { background: rgba(210, 153, 34, .14);  color: var(--warning); }
+  .badge.b-interested   { background: rgba(63, 185, 80, .18);   color: #56d364; border-color: rgba(63, 185, 80, .3); }
+  .badge.b-not          { background: rgba(248, 81, 73, .15);   color: var(--danger); border-color: rgba(248, 81, 73, .25); }
 
-  select.status-select {
-    font-size: .75rem; border: 1px solid var(--border); border-radius: 6px;
-    padding: 2px 4px; background: var(--card); cursor: pointer;
+  /* ── BOUTONS D'ACTION ── */
+  .row-actions { display: inline-flex; gap: 6px; }
+  .ra-btn {
+    border: 1px solid var(--border);
+    background: var(--panel-2);
+    color: var(--text);
+    border-radius: 7px;
+    padding: 7px 12px;
+    cursor: pointer;
+    font-size: .82rem;
+    font-weight: 500;
+    transition: all .12s;
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
   }
-
-  /* ── DROPDOWN STATUT CUSTOM ── */
-  .status-dropdown {
-    position: fixed; background: var(--card); border: 1px solid var(--border);
-    border-radius: 8px; box-shadow: 0 6px 24px rgba(0,0,0,.14);
-    z-index: 9999; min-width: 190px; padding: 4px 0; font-size: .82rem;
+  .ra-btn:hover { transform: translateY(-1px); }
+  .ra-btn:active { transform: translateY(0); }
+  .ra-btn.ra-yes {
+    background: rgba(63, 185, 80, .12);
+    border-color: rgba(63, 185, 80, .3);
+    color: var(--success);
   }
-  .sd-group {
-    padding: 7px 12px 3px; font-size: .68rem; font-weight: 700; letter-spacing: .06em;
-    text-transform: uppercase; color: var(--muted); cursor: default; user-select: none;
+  .ra-btn.ra-yes:hover { background: rgba(63, 185, 80, .22); border-color: var(--success); }
+  .ra-btn.ra-no {
+    background: rgba(248, 81, 73, .1);
+    border-color: rgba(248, 81, 73, .28);
+    color: var(--danger);
   }
-  .sd-group:not(:first-child) { border-top: 1px solid var(--border); margin-top: 3px; }
-  .sd-option {
-    padding: 5px 14px; cursor: pointer; display: flex; align-items: center; gap: 8px;
-  }
-  .sd-option:hover { background: var(--bg); }
-  .sd-option .badge { pointer-events: none; font-size: .72rem; }
-
-  /* ── NOTES ── */
-  .notes-cell { position: relative; }
-  .notes-text {
-    min-height: 26px; padding: 3px 6px; border-radius: 5px;
-    border: 1px solid transparent; cursor: pointer; color: var(--text);
-    font-size: .8rem; line-height: 1.4; white-space: pre-wrap; word-break: break-word;
-  }
-  .notes-text:hover { border-color: var(--border); background: var(--bg); }
-  .notes-text:empty::before { content: '+ note'; color: var(--muted); font-style: italic; }
-  textarea.notes-ta {
-    width: 100%; min-height: 56px; resize: vertical;
-    border: 1px solid var(--primary); border-radius: 5px; padding: 4px 6px;
-    font-size: .8rem; font-family: inherit; outline: none; background: var(--card);
-  }
-  .save-indicator { font-size: .68rem; color: var(--muted); position: absolute; bottom: -13px; right: 0; }
-
-  /* ── RAPPEL ── */
-  input.rappel-input {
-    border: 1px solid var(--border); border-radius: 5px; padding: 3px 6px;
-    font-size: .8rem; font-family: inherit; background: var(--bg); color: var(--text); width: 110px;
-  }
-  input.rappel-input.overdue { border-color: var(--danger); background: #fef2f2; }
+  .ra-btn.ra-no:hover { background: rgba(248, 81, 73, .2); border-color: var(--danger); }
+  .ra-btn.ra-card { color: var(--muted); }
+  .ra-btn.ra-card:hover { color: var(--text); background: var(--panel-3); }
 
   /* ── PAGINATION ── */
   #pagination {
-    display: flex; align-items: center; justify-content: center;
-    gap: 10px; padding: 14px 24px; font-size: .83rem; color: var(--muted); flex-wrap: wrap;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 12px;
+    padding: 18px 24px;
+    font-size: .85rem;
+    color: var(--muted);
+    flex-wrap: wrap;
   }
   .page-btn {
-    background: var(--card); border: 1px solid var(--border); border-radius: 6px;
-    padding: 5px 14px; cursor: pointer; font-size: .83rem; transition: background .15s;
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 7px;
+    padding: 7px 16px;
+    cursor: pointer;
+    font-size: .85rem;
+    color: var(--text);
+    transition: all .12s;
   }
-  .page-btn:hover:not(:disabled) { background: var(--border); }
-  .page-btn:disabled { opacity: .4; cursor: default; }
-  #f-page-size {
-    border: 1px solid var(--border); border-radius: 6px; padding: 4px 8px;
-    font-size: .8rem; background: var(--bg); color: var(--text); cursor: pointer;
-  }
+  .page-btn:hover:not(:disabled) { background: var(--panel-2); border-color: var(--muted-2); }
+  .page-btn:disabled { opacity: .35; cursor: default; }
 
   /* ── LOADER / ERROR ── */
-  #loader { text-align: center; padding: 40px; color: var(--muted); font-size: .9rem; display: none; }
+  #loader {
+    text-align: center;
+    padding: 60px 20px;
+    color: var(--muted);
+    font-size: .9rem;
+    display: none;
+  }
   #loader.visible { display: block; }
+  .spinner {
+    display: inline-block;
+    width: 20px; height: 20px;
+    border: 2px solid var(--border);
+    border-top-color: var(--primary);
+    border-radius: 50%;
+    animation: spin .8s linear infinite;
+    margin-right: 10px;
+    vertical-align: middle;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
   #error-msg {
-    background: #fef2f2; color: #b91c1c; border: 1px solid #fecaca;
-    border-radius: 8px; padding: 12px 18px; margin: 16px 24px;
-    font-size: .85rem; display: none;
+    background: rgba(248, 81, 73, .1);
+    color: var(--danger);
+    border: 1px solid rgba(248, 81, 73, .3);
+    border-radius: 8px;
+    padding: 12px 18px;
+    margin: 16px 24px;
+    font-size: .85rem;
+    display: none;
   }
   #error-msg.visible { display: block; }
+
+  /* ── TOAST ── */
+  #toast {
+    position: fixed;
+    bottom: 24px;
+    left: 50%;
+    transform: translateX(-50%) translateY(120%);
+    background: var(--panel-3);
+    border: 1px solid var(--border);
+    color: var(--text);
+    padding: 12px 22px;
+    border-radius: 10px;
+    box-shadow: 0 10px 40px rgba(0, 0, 0, .5);
+    z-index: 10000;
+    transition: transform .3s cubic-bezier(.2, .9, .3, 1.2);
+    font-size: .88rem;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+  #toast.show { transform: translateX(-50%) translateY(0); }
+  #toast.success { border-color: var(--success); }
+  #toast.error { border-color: var(--danger); color: var(--danger); }
 
   /* ── LOGIN ── */
   #login-overlay {
     position: fixed; inset: 0;
-    background: linear-gradient(135deg, #1e3a5f 0%, #2d6a4f 100%);
+    background: linear-gradient(135deg, #0d1117 0%, #1a2332 50%, #0d3b1f 100%);
     display: flex; align-items: center; justify-content: center; z-index: 9999;
   }
   #login-overlay.hidden { display: none; }
   .login-card {
-    background: var(--card); border-radius: 14px; padding: 40px 36px;
-    width: 100%; max-width: 380px; box-shadow: 0 20px 60px rgba(0,0,0,.3); text-align: center;
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 16px;
+    padding: 44px 38px;
+    width: 100%; max-width: 380px;
+    box-shadow: 0 30px 80px rgba(0, 0, 0, .6);
+    text-align: center;
   }
-  .login-card h2 { font-size: 1.4rem; margin-bottom: 6px; }
-  .login-card p  { color: var(--muted); font-size: .88rem; margin-bottom: 28px; }
+  .login-card h2 {
+    font-size: 1.5rem;
+    margin-bottom: 6px;
+    background: linear-gradient(135deg, #58a6ff, #3fb950);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+  }
+  .login-card p { color: var(--muted); font-size: .88rem; margin-bottom: 28px; }
   .login-form-group { display: flex; flex-direction: column; gap: 12px; }
   .login-form-group input {
-    border: 1px solid var(--border); border-radius: 8px; padding: 10px 14px;
-    font-size: .9rem; font-family: inherit; outline: none; transition: border-color .2s;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 11px 14px;
+    color: var(--text);
+    outline: none;
+    transition: border-color .15s, box-shadow .15s;
   }
-  .login-form-group input:focus { border-color: var(--primary); }
+  .login-form-group input:focus {
+    border-color: var(--primary);
+    box-shadow: 0 0 0 3px rgba(88, 166, 255, .15);
+  }
   #login-btn {
-    margin-top: 6px; background: var(--primary); color: #fff; border: none;
-    border-radius: 8px; padding: 11px; font-size: .95rem; font-weight: 600;
-    cursor: pointer; transition: background .15s;
+    margin-top: 6px;
+    background: var(--primary);
+    color: #fff;
+    border: none;
+    border-radius: 8px;
+    padding: 12px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: background .15s;
   }
-  #login-btn:hover { background: #2563eb; }
-  #login-btn:disabled { background: #93c5fd; cursor: default; }
+  #login-btn:hover:not(:disabled) { background: var(--primary-d); }
+  #login-btn:disabled { opacity: .55; cursor: default; }
   #login-error { margin-top: 12px; color: var(--danger); font-size: .82rem; min-height: 18px; }
+
+  /* ── SIDE PANEL (Répondu) ── */
+  .panel-overlay {
+    position: fixed; inset: 0;
+    background: rgba(0, 0, 0, .5);
+    z-index: 200;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity .2s;
+  }
+  .panel-overlay.show { opacity: 1; pointer-events: auto; }
+
+  #side-panel {
+    position: fixed;
+    top: 0; right: 0; bottom: 0;
+    width: 420px;
+    max-width: 92vw;
+    background: var(--panel);
+    border-left: 1px solid var(--border);
+    box-shadow: -12px 0 40px rgba(0, 0, 0, .4);
+    z-index: 300;
+    transform: translateX(100%);
+    transition: transform .25s cubic-bezier(.2, .8, .2, 1);
+    display: flex;
+    flex-direction: column;
+  }
+  #side-panel.show { transform: translateX(0); }
+
+  .sp-header {
+    padding: 18px 22px;
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    align-items: flex-start;
+    gap: 10px;
+  }
+  .sp-header h3 {
+    flex: 1;
+    font-size: 1rem;
+    line-height: 1.3;
+  }
+  .sp-header .sp-sub { color: var(--muted); font-size: .82rem; margin-top: 2px; font-weight: normal; }
+  .sp-close {
+    background: none;
+    border: none;
+    color: var(--muted);
+    cursor: pointer;
+    padding: 4px 8px;
+    border-radius: 6px;
+    font-size: 1.1rem;
+    line-height: 1;
+  }
+  .sp-close:hover { background: var(--panel-3); color: var(--text); }
+
+  .sp-body {
+    flex: 1;
+    padding: 20px 22px;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    gap: 18px;
+  }
+  .sp-field { display: flex; flex-direction: column; gap: 8px; }
+  .sp-field label {
+    font-size: .78rem;
+    font-weight: 600;
+    color: var(--muted);
+    text-transform: uppercase;
+    letter-spacing: .04em;
+  }
+  .sp-input, .sp-textarea {
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 10px 12px;
+    color: var(--text);
+    outline: none;
+    transition: border-color .15s, box-shadow .15s;
+  }
+  .sp-input:focus, .sp-textarea:focus {
+    border-color: var(--primary);
+    box-shadow: 0 0 0 3px rgba(88, 166, 255, .15);
+  }
+  .sp-textarea { resize: vertical; min-height: 70px; font-family: inherit; }
+
+  .opt-group { display: flex; gap: 8px; flex-wrap: wrap; }
+  .opt-btn {
+    flex: 1;
+    min-width: 80px;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 9px 12px;
+    cursor: pointer;
+    font-size: .85rem;
+    font-weight: 500;
+    color: var(--text);
+    transition: all .12s;
+  }
+  .opt-btn:hover { border-color: var(--muted-2); }
+  .opt-btn.selected { background: var(--panel-3); border-color: var(--primary); color: var(--primary); }
+  .opt-btn[data-int="chaud"].selected   { border-color: var(--hot);  color: var(--hot);  background: rgba(255,123,114,.1); }
+  .opt-btn[data-int="tiede"].selected   { border-color: var(--warm); color: var(--warm); background: rgba(255,166,87,.12); }
+  .opt-btn[data-int="froid"].selected   { border-color: var(--cold); color: var(--cold); background: rgba(121,192,255,.1); }
+  .opt-btn[data-act="rappel"].selected  { border-color: var(--warning); color: var(--warning); background: rgba(210,153,34,.12); }
+  .opt-btn[data-act="demo"].selected    { border-color: var(--success); color: var(--success); background: rgba(63,185,80,.12); }
+  .opt-btn[data-act="non"].selected     { border-color: var(--danger);  color: var(--danger);  background: rgba(248,81,73,.12); }
+
+  .sp-footer {
+    padding: 16px 22px;
+    border-top: 1px solid var(--border);
+    display: flex;
+    gap: 10px;
+  }
+  .btn-primary {
+    flex: 1;
+    background: var(--success);
+    color: #fff;
+    border: none;
+    border-radius: 8px;
+    padding: 11px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: background .15s;
+  }
+  .btn-primary:hover:not(:disabled) { background: var(--success-d); }
+  .btn-primary:disabled { opacity: .5; cursor: default; }
+  .btn-ghost {
+    background: none;
+    border: 1px solid var(--border);
+    color: var(--muted);
+    border-radius: 8px;
+    padding: 11px 18px;
+    cursor: pointer;
+    font-weight: 500;
+    transition: all .15s;
+  }
+  .btn-ghost:hover { background: var(--panel-3); color: var(--text); }
+
+  /* ── MODAL FICHE ── */
+  #lead-modal {
+    position: fixed; inset: 0;
+    background: rgba(0, 0, 0, .65);
+    z-index: 250;
+    display: none;
+    align-items: flex-start;
+    justify-content: center;
+    padding: 40px 20px;
+    overflow-y: auto;
+  }
+  #lead-modal.show { display: flex; }
+  .lm-card {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    width: 100%;
+    max-width: 760px;
+    box-shadow: 0 20px 60px rgba(0, 0, 0, .5);
+  }
+  .lm-header {
+    padding: 22px 26px;
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    align-items: flex-start;
+    gap: 14px;
+  }
+  .lm-header-info { flex: 1; }
+  .lm-header h2 { font-size: 1.3rem; margin-bottom: 6px; }
+  .lm-meta { color: var(--muted); font-size: .85rem; display: flex; flex-wrap: wrap; gap: 14px; }
+  .lm-meta span { display: inline-flex; align-items: center; gap: 5px; }
+  .lm-call-now {
+    background: var(--success);
+    color: #fff;
+    border: none;
+    border-radius: 8px;
+    padding: 10px 16px;
+    font-weight: 600;
+    cursor: pointer;
+    text-decoration: none;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    transition: background .15s;
+  }
+  .lm-call-now:hover { background: var(--success-d); text-decoration: none; }
+
+  .lm-body {
+    padding: 22px 26px;
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 22px;
+  }
+  @media (max-width: 720px) { .lm-body { grid-template-columns: 1fr; } }
+
+  .lm-section h4 {
+    font-size: .8rem;
+    color: var(--muted);
+    margin-bottom: 10px;
+    text-transform: uppercase;
+    letter-spacing: .05em;
+    font-weight: 600;
+  }
+
+  .lm-field { display: flex; flex-direction: column; gap: 6px; margin-bottom: 12px; }
+  .lm-field label { font-size: .78rem; color: var(--muted); }
+  .lm-field input, .lm-field select, .lm-field textarea {
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 7px;
+    padding: 8px 10px;
+    color: var(--text);
+    outline: none;
+    transition: border-color .15s;
+  }
+  .lm-field input:focus, .lm-field select:focus, .lm-field textarea:focus { border-color: var(--primary); }
+  .lm-field textarea { resize: vertical; min-height: 60px; font-family: inherit; }
+
+  .timeline {
+    list-style: none;
+    max-height: 280px;
+    overflow-y: auto;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 10px;
+    background: var(--bg);
+  }
+  .timeline li {
+    padding: 8px 6px;
+    border-bottom: 1px solid var(--border-2);
+    font-size: .82rem;
+  }
+  .timeline li:last-child { border-bottom: none; }
+  .tl-head { display: flex; align-items: center; gap: 8px; margin-bottom: 3px; }
+  .tl-type {
+    font-size: .68rem;
+    font-weight: 700;
+    padding: 1px 7px;
+    border-radius: 999px;
+    text-transform: uppercase;
+    letter-spacing: .04em;
+  }
+  .tl-type.repondu      { background: rgba(63,185,80,.15);  color: var(--success); }
+  .tl-type.sans_reponse { background: rgba(248,81,73,.15);  color: var(--danger); }
+  .tl-date { color: var(--muted); font-size: .78rem; }
+  .tl-int { font-size: .72rem; color: var(--muted); margin-left: auto; }
+  .tl-int.chaud { color: var(--hot); }
+  .tl-int.tiede { color: var(--warm); }
+  .tl-int.froid { color: var(--cold); }
+  .tl-note { color: var(--muted); font-size: .8rem; margin-top: 3px; padding-left: 2px; white-space: pre-wrap; }
+  .tl-empty { color: var(--muted-2); font-style: italic; padding: 14px; text-align: center; }
+
+  .hours-bar {
+    display: grid;
+    grid-template-columns: repeat(24, 1fr);
+    gap: 2px;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 10px;
+  }
+  .hour-cell {
+    height: 28px;
+    border-radius: 3px;
+    background: var(--panel-3);
+    position: relative;
+    cursor: default;
+  }
+  .hour-cell .hour-label {
+    position: absolute;
+    bottom: -16px;
+    left: 50%;
+    transform: translateX(-50%);
+    font-size: .58rem;
+    color: var(--muted-2);
+  }
+  .hour-cell.has-resp { background: var(--success); }
+  .hours-legend { font-size: .72rem; color: var(--muted); margin-top: 22px; text-align: center; }
+
+  .lm-footer {
+    padding: 14px 26px;
+    border-top: 1px solid var(--border);
+    display: flex;
+    justify-content: flex-end;
+    gap: 10px;
+  }
+
+  /* ── ANALYTICS ── */
+  #view-analytics { padding: 24px; }
+  .stats-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+    gap: 14px;
+    margin-bottom: 28px;
+  }
+  .stat-card {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 18px 20px;
+  }
+  .stat-card .stat-label {
+    font-size: .76rem;
+    color: var(--muted);
+    text-transform: uppercase;
+    letter-spacing: .04em;
+    font-weight: 600;
+  }
+  .stat-card .stat-value {
+    font-size: 1.85rem;
+    font-weight: 700;
+    margin-top: 6px;
+  }
+  .stat-card .stat-extra {
+    font-size: .78rem;
+    color: var(--muted-2);
+    margin-top: 2px;
+  }
+  .stat-card.success .stat-value { color: var(--success); }
+  .stat-card.danger .stat-value  { color: var(--danger); }
+  .stat-card.primary .stat-value { color: var(--primary); }
+  .stat-card.warning .stat-value { color: var(--warning); }
+
+  .chart-card {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 20px 22px;
+    margin-bottom: 18px;
+  }
+  .chart-card h3 {
+    font-size: .95rem;
+    margin-bottom: 4px;
+  }
+  .chart-card .chart-sub {
+    font-size: .8rem;
+    color: var(--muted);
+    margin-bottom: 16px;
+  }
+
+  .heatmap {
+    display: grid;
+    grid-template-columns: 50px repeat(24, 1fr);
+    gap: 3px;
+    font-size: .7rem;
+  }
+  .hm-corner, .hm-hour-label, .hm-day-label {
+    color: var(--muted);
+    text-align: center;
+    padding: 3px 0;
+  }
+  .hm-day-label { text-align: right; padding-right: 8px; }
+  .hm-cell {
+    height: 28px;
+    border-radius: 4px;
+    background: var(--panel-3);
+    cursor: default;
+    position: relative;
+    transition: transform .1s;
+  }
+  .hm-cell:hover { transform: scale(1.2); z-index: 5; }
+  .hm-cell[data-tip]:hover::after {
+    content: attr(data-tip);
+    position: absolute;
+    bottom: calc(100% + 4px);
+    left: 50%;
+    transform: translateX(-50%);
+    background: var(--bg);
+    border: 1px solid var(--border);
+    color: var(--text);
+    padding: 4px 8px;
+    border-radius: 5px;
+    white-space: nowrap;
+    font-size: .72rem;
+    z-index: 10;
+  }
+
+  .bars {
+    display: flex;
+    align-items: flex-end;
+    gap: 6px;
+    height: 200px;
+    padding: 10px 4px 4px;
+  }
+  .bars.bars-day { gap: 14px; }
+  .bar-col {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 6px;
+    min-width: 0;
+  }
+  .bar {
+    width: 100%;
+    background: linear-gradient(to top, var(--primary-d), var(--primary));
+    border-radius: 4px 4px 0 0;
+    min-height: 2px;
+    position: relative;
+    transition: opacity .12s;
+  }
+  .bar:hover { opacity: .85; }
+  .bar-val {
+    position: absolute;
+    top: -18px;
+    left: 50%;
+    transform: translateX(-50%);
+    font-size: .7rem;
+    color: var(--muted);
+    white-space: nowrap;
+  }
+  .bar-label { font-size: .7rem; color: var(--muted); }
+
+  .empty-msg {
+    text-align: center;
+    color: var(--muted);
+    padding: 40px 20px;
+    font-size: .9rem;
+  }
+
+  /* ── SCROLLBAR ── */
+  ::-webkit-scrollbar { width: 10px; height: 10px; }
+  ::-webkit-scrollbar-track { background: var(--bg); }
+  ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 5px; }
+  ::-webkit-scrollbar-thumb:hover { background: var(--muted-2); }
+
+  /* ── MOBILE (<= 640px) — Layout cards au lieu du tableau ── */
+  @media (max-width: 640px) {
+    /* Header : autorise le wrap, masque le nom user (récupérable via menu si besoin) */
+    header { padding: 10px 14px; gap: 12px; flex-wrap: wrap; row-gap: 6px; }
+    header h1 { font-size: .95rem; }
+    #user-name { display: none; }
+    #btn-logout { padding: 4px 8px; font-size: .72rem; }
+    .tab-btn { padding: 6px 10px; font-size: .82rem; }
+
+    /* Filters sticky sous le header (header ~46px en mobile) */
+    #filters {
+      position: sticky;
+      top: 46px;
+      z-index: 90;
+      padding: 10px 14px;
+      gap: 8px;
+      box-shadow: 0 4px 10px rgba(0, 0, 0, .25);
+    }
+    #search { min-width: 0; width: 100%; padding: 10px 12px; font-size: .95rem; }
+    .quick-filters { width: 100%; overflow-x: auto; flex-wrap: nowrap; padding-bottom: 2px; }
+    .quick-filters::-webkit-scrollbar { height: 0; }
+    .qf-chip { flex-shrink: 0; }
+
+    /* Tableau → cards */
+    #wrap { padding: 12px 12px 4px; overflow-x: visible; }
+    table { background: transparent; border-radius: 0; display: block; }
+    thead { display: none; }
+    tbody { display: block; }
+    tbody tr {
+      display: block;
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      margin-bottom: 12px;
+      padding: 14px 16px;
+    }
+    tbody tr:hover { background: var(--panel); }
+    tbody tr:last-child { border-bottom: 1px solid var(--border); }
+    tbody td { display: block; padding: 0; vertical-align: baseline; }
+
+    /* Champs masqués sur mobile : gérant + dernière action (consultables via la fiche) */
+    td.col-gerant, td.col-action { display: none; }
+
+    td.col-name { font-size: 1rem; margin-bottom: 4px; min-width: 0; }
+    td.col-name .sub-line {
+      font-size: .85rem;
+      color: var(--primary);
+      margin-top: 4px;
+      font-weight: 500;
+    }
+    td.col-ville { font-size: .82rem; color: var(--muted); margin-bottom: 8px; }
+    td.col-statut { width: auto; margin-bottom: 12px; }
+    td.col-actions { width: 100%; text-align: left; white-space: normal; margin-top: 4px; }
+
+    /* 2 boutons Répondu / Sans réponse en grille + Fiche secondaire dessous */
+    .row-actions {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 8px;
+      width: 100%;
+    }
+    .ra-btn {
+      min-height: 56px;
+      font-size: .95rem;
+      padding: 12px;
+      justify-content: center;
+      border-radius: 10px;
+    }
+    .ra-btn:hover { transform: none; }
+    .ra-btn.ra-card {
+      grid-column: 1 / -1;
+      min-height: 40px;
+      font-size: .82rem;
+      background: transparent;
+      border: 1px dashed var(--border);
+      color: var(--muted);
+      margin-top: 2px;
+    }
+    .ra-btn.ra-card::after { content: '  Voir la fiche'; }
+
+    /* Pagination plus aérée */
+    #pagination { padding: 16px 14px 24px; gap: 8px; }
+    .page-btn { padding: 10px 14px; }
+
+    /* Side panel & modal : full-width */
+    #side-panel { width: 100vw; max-width: 100vw; }
+    #lead-modal { padding: 0; align-items: stretch; }
+    .lm-card { border-radius: 0; max-width: 100%; min-height: 100vh; }
+    .lm-header { flex-direction: column; align-items: stretch; }
+    .lm-call-now { width: 100%; justify-content: center; min-height: 52px; }
+    .lm-body { padding: 16px; gap: 16px; }
+  }
 </style>
 </head>
 <body>
@@ -288,7 +937,7 @@
 <!-- LOGIN -->
 <div id="login-overlay">
   <div class="login-card">
-    <h2>🌿 CRM Paysagistes</h2>
+    <h2>CRM Appels</h2>
     <p>Connectez-vous pour accéder au CRM</p>
     <div class="login-form-group">
       <input type="email"    id="login-email" placeholder="Email" autocomplete="email" required />
@@ -303,593 +952,1018 @@
 <div id="crm-app" style="display:none">
 
 <header>
-  <h1>🌿 CRM Paysagistes</h1>
-  <div class="stats-bar" id="stats-bar">
-    <span class="stat-chip total"            id="s-total">—</span>
-    <span class="stat-chip today"            id="s-today">—</span>
-    <span class="stat-chip contacte"         id="s-contacte"         data-statut="contacte">—</span>
-    <span class="stat-chip en_discussion"    id="s-en_discussion"    data-statut="en_discussion">—</span>
-    <span class="stat-chip solution_envoyee" id="s-solution_envoyee" data-statut="solution_envoyee">—</span>
-    <span class="stat-chip gagne"            id="s-gagne"            data-statut="gagne">—</span>
-    <span class="stat-chip perdu"            id="s-perdu"            data-statut="perdu">—</span>
-    <span class="stat-chip hors_cible"       id="s-hors_cible"       data-statut="hors_cible">—</span>
+  <h1>CRM Appels</h1>
+  <div class="tabs">
+    <button class="tab-btn active" data-view="leads">Leads</button>
+    <button class="tab-btn" data-view="analytics">Analytics</button>
   </div>
   <div id="user-info">
+    <div id="realtime-dot" title="Sync temps réel"></div>
     <span id="user-name"></span>
     <button id="btn-logout">Déconnexion</button>
-    <div id="realtime-dot" title="Sync temps réel"></div>
   </div>
 </header>
 
-<div id="filters">
-  <input type="search" id="search" placeholder="🔍 Rechercher partout (Ctrl+F)…" />
-  <select id="f-statut">
-    <option value="">Tous les statuts</option>
-    <optgroup label="── Par défaut ──">
-      <option value="nouveau">Nouveau</option>
-    </optgroup>
-    <optgroup label="── Dans le pipe ──">
-      <option value="contacte">Contacté</option>
-      <option value="en_discussion">En discussion</option>
-      <option value="solution_envoyee">Solution envoyée</option>
-      <option value="relance_essai">Relancé pour essai</option>
-      <option value="accompagne">Accompagné</option>
-      <option value="gagne">Gagné</option>
-    </optgroup>
-    <optgroup label="── No Go ──">
-      <option value="perdu">Perdu</option>
-      <option value="pas_interesse">Pas intéressé</option>
-      <option value="sans_suite">Sans suite</option>
-      <option value="hors_cible">Hors cible</option>
-      <option value="a_ferme">A fermé</option>
-    </optgroup>
-  </select>
-  <select id="f-dept"><option value="">Tous les depts</option></select>
-  <label class="filter-check"><input type="checkbox" id="f-has-email" /> A un email</label>
-  <label class="filter-check"><input type="checkbox" id="f-has-phone" /> A un tél</label>
-  <select id="f-site">
-    <option value="">Site web : tous</option>
-    <option value="yes">Avec site</option>
-    <option value="no">Sans site</option>
-  </select>
-  <select id="f-rappel">
-    <option value="">Rappels : tous</option>
-    <option value="today">Aujourd'hui</option>
-    <option value="overdue">En retard</option>
-    <option value="upcoming">Dans 7 jours</option>
-  </select>
-  <select id="f-assigne"><option value="">Tous les assignés</option></select>
-  <div class="filters-right">
-    <button id="btn-export">⬇ CSV</button>
-    <button id="btn-reset">✕ Réinitialiser</button>
+<!-- VIEW : LEADS -->
+<div id="view-leads" class="view active">
+  <div id="filters">
+    <input type="search" id="search" placeholder="Rechercher par nom ou ville…" autocomplete="off" />
+    <div class="quick-filters">
+      <button class="qf-chip active" data-qf="tous">Tous <span class="qf-count" id="c-tous">—</span></button>
+      <button class="qf-chip" data-qf="a_appeler">À appeler <span class="qf-count" id="c-a_appeler">—</span></button>
+      <button class="qf-chip" data-qf="repondu">Répondu <span class="qf-count" id="c-repondu">—</span></button>
+      <button class="qf-chip" data-qf="sans_reponse">Sans réponse <span class="qf-count" id="c-sans_reponse">—</span></button>
+      <button class="qf-chip" data-qf="rappel">Rappel <span class="qf-count" id="c-rappel">—</span></button>
+      <button class="qf-chip" data-qf="interesse">Intéressé <span class="qf-count" id="c-interesse">—</span></button>
+      <button class="qf-chip" data-qf="pas_interesse">Pas intéressé <span class="qf-count" id="c-pas_interesse">—</span></button>
+    </div>
+  </div>
+
+  <div id="error-msg"></div>
+  <div id="loader" class="visible"><span class="spinner"></span>Chargement…</div>
+
+  <div id="wrap">
+    <table>
+      <thead>
+        <tr>
+          <th class="col-name">Entreprise</th>
+          <th class="col-gerant">Gérant</th>
+          <th class="col-ville">Ville</th>
+          <th class="col-statut">Statut</th>
+          <th class="col-action">Dernière action</th>
+          <th class="col-actions">Actions rapides</th>
+        </tr>
+      </thead>
+      <tbody id="tbody"></tbody>
+    </table>
+  </div>
+
+  <div id="pagination">
+    <button class="page-btn" id="btn-prev" disabled>← Précédent</button>
+    <span id="page-info">—</span>
+    <button class="page-btn" id="btn-next" disabled>Suivant →</button>
   </div>
 </div>
 
-<div id="bulk-bar">
-  <span id="bulk-count">0 sélectionnés</span>
-  <span style="opacity:.5">|</span>
-  <span style="font-size:.8rem">Changer statut :</span>
-  <button class="bulk-btn" data-statut="contacte">Contacté</button>
-  <button class="bulk-btn" data-statut="en_discussion">En discussion</button>
-  <button class="bulk-btn" data-statut="solution_envoyee">Solution envoyée</button>
-  <button class="bulk-btn" data-statut="relance_essai">Relancé pour essai</button>
-  <button class="bulk-btn" data-statut="accompagne">Accompagné</button>
-  <button class="bulk-btn" data-statut="gagne">Gagné</button>
-  <button class="bulk-btn" data-statut="perdu">Perdu</button>
-  <button class="bulk-btn" data-statut="pas_interesse">Pas intéressé</button>
-  <button class="bulk-btn" data-statut="sans_suite">Sans suite</button>
-  <button class="bulk-btn" data-statut="hors_cible">Hors cible</button>
-  <button class="bulk-btn" data-statut="a_ferme">A fermé</button>
-  <button id="bulk-cancel">✕ Annuler</button>
+<!-- VIEW : ANALYTICS -->
+<div id="view-analytics" class="view">
+  <div id="analytics-loader" style="text-align:center;padding:60px;color:var(--muted);">
+    <span class="spinner"></span>Calcul des stats…
+  </div>
+  <div id="analytics-content" style="display:none;">
+
+    <div class="stats-grid">
+      <div class="stat-card primary">
+        <div class="stat-label">Aujourd'hui</div>
+        <div class="stat-value" id="a-today-calls">—</div>
+        <div class="stat-extra">appels passés</div>
+      </div>
+      <div class="stat-card primary">
+        <div class="stat-label">Cette semaine</div>
+        <div class="stat-value" id="a-week-calls">—</div>
+        <div class="stat-extra">appels passés</div>
+      </div>
+      <div class="stat-card success">
+        <div class="stat-label">Répondu</div>
+        <div class="stat-value" id="a-answered">—</div>
+        <div class="stat-extra" id="a-answered-rate">—</div>
+      </div>
+      <div class="stat-card danger">
+        <div class="stat-label">Sans réponse</div>
+        <div class="stat-value" id="a-no-answer">—</div>
+        <div class="stat-extra" id="a-no-answer-rate">—</div>
+      </div>
+      <div class="stat-card warning">
+        <div class="stat-label">Meilleure heure</div>
+        <div class="stat-value" id="a-best-hour">—</div>
+        <div class="stat-extra" id="a-best-hour-rate">—</div>
+      </div>
+    </div>
+
+    <div class="chart-card">
+      <h3>Heatmap : taux de réponse par heure & jour</h3>
+      <div class="chart-sub">Plus c'est vert, plus le taux de réponse est élevé. Survol pour le détail.</div>
+      <div class="heatmap" id="heatmap"></div>
+    </div>
+
+    <div class="chart-card">
+      <h3>Taux de réponse par heure de la journée</h3>
+      <div class="chart-sub">Identifie les meilleurs créneaux pour appeler.</div>
+      <div class="bars" id="bars-hour"></div>
+    </div>
+
+    <div class="chart-card">
+      <h3>Taux de réponse par jour de la semaine</h3>
+      <div class="chart-sub">Identifie les meilleurs jours pour appeler.</div>
+      <div class="bars bars-day" id="bars-day"></div>
+    </div>
+
+  </div>
 </div>
 
-<div id="error-msg"></div>
-<div id="loader" class="visible">Chargement…</div>
+<!-- SIDE PANEL : Répondu -->
+<div class="panel-overlay" id="panel-overlay"></div>
+<aside id="side-panel" aria-hidden="true">
+  <div class="sp-header">
+    <div style="flex:1;">
+      <h3 id="sp-title">—</h3>
+      <div class="sp-sub" id="sp-sub">—</div>
+    </div>
+    <button class="sp-close" id="sp-close" title="Fermer">✕</button>
+  </div>
+  <div class="sp-body">
+    <div class="sp-field">
+      <label>Durée de l'appel (minutes)</label>
+      <input type="number" class="sp-input" id="sp-duree" min="0" step="1" placeholder="ex : 5" />
+    </div>
+    <div class="sp-field">
+      <label>Intérêt</label>
+      <div class="opt-group" id="sp-int">
+        <button class="opt-btn" data-int="chaud" type="button">🔥 Chaud</button>
+        <button class="opt-btn" data-int="tiede" type="button">🌤 Tiède</button>
+        <button class="opt-btn" data-int="froid" type="button">❄️ Froid</button>
+      </div>
+    </div>
+    <div class="sp-field">
+      <label>Note rapide</label>
+      <textarea class="sp-textarea" id="sp-note" placeholder="1-2 lignes pour te souvenir de l'appel…"></textarea>
+    </div>
+    <div class="sp-field">
+      <label>Prochaine action</label>
+      <div class="opt-group" id="sp-act">
+        <button class="opt-btn" data-act="rappel" type="button">📅 Rappel</button>
+        <button class="opt-btn" data-act="demo"   type="button">🚀 Démo</button>
+        <button class="opt-btn" data-act="non"    type="button">🚫 Pas intéressé</button>
+      </div>
+      <input type="date" class="sp-input" id="sp-rappel-date" style="display:none;margin-top:8px;" />
+    </div>
+  </div>
+  <div class="sp-footer">
+    <button class="btn-ghost" id="sp-cancel" type="button">Annuler</button>
+    <button class="btn-primary" id="sp-save" type="button">Enregistrer</button>
+  </div>
+</aside>
 
-<div id="wrap">
-  <table>
-    <thead>
-      <tr>
-        <th class="col-check"><input type="checkbox" id="select-all" title="Tout sélectionner" /></th>
-        <th class="sortable col-dept"   data-col="dept">Dept</th>
-        <th class="sortable col-name"   data-col="name">Nom</th>
-        <th class="col-ville">Ville</th>
-        <th class="sortable col-phone"  data-col="phone">Téléphone</th>
-        <th class="col-email">Email</th>
-        <th class="sortable col-rating" data-col="rating">Note</th>
-        <th class="col-status">Statut</th>
-        <th class="col-notes">Notes</th>
-        <th class="sortable col-recall" data-col="rappel_le">Rappel</th>
-        <th class="col-links">Liens</th>
-      </tr>
-    </thead>
-    <tbody id="tbody"></tbody>
-  </table>
+<!-- MODAL : Fiche complète -->
+<div id="lead-modal">
+  <div class="lm-card">
+    <div class="lm-header">
+      <div class="lm-header-info">
+        <h2 id="lm-name">—</h2>
+        <div class="lm-meta">
+          <span id="lm-gerant"></span>
+          <span id="lm-ville"></span>
+          <span id="lm-phone"></span>
+          <span id="lm-web"></span>
+        </div>
+      </div>
+      <a class="lm-call-now" id="lm-call-now" href="#">📞 Appeler</a>
+    </div>
+    <div class="lm-body">
+      <div class="lm-section">
+        <h4>Timeline des appels</h4>
+        <ul class="timeline" id="lm-timeline"></ul>
+
+        <h4 style="margin-top:20px;">Heures où il a répondu</h4>
+        <div class="hours-bar" id="lm-hours-bar"></div>
+        <div class="hours-legend">0h → 23h (cellules vertes = appels répondus)</div>
+      </div>
+      <div class="lm-section">
+        <h4>Édition du lead</h4>
+        <div class="lm-field">
+          <label>Statut</label>
+          <select id="lm-statut"></select>
+        </div>
+        <div class="lm-field">
+          <label>Notes</label>
+          <textarea id="lm-notes" placeholder="Notes générales…"></textarea>
+        </div>
+        <div class="lm-field">
+          <label>Date de rappel</label>
+          <input type="date" id="lm-rappel" />
+        </div>
+        <div class="lm-field">
+          <label>Assigné à</label>
+          <input type="text" id="lm-assigne" placeholder="Nom de la personne" />
+        </div>
+      </div>
+    </div>
+    <div class="lm-footer">
+      <button class="btn-ghost" id="lm-close">Fermer</button>
+      <button class="btn-primary" id="lm-save" style="background:var(--primary);">Enregistrer</button>
+    </div>
+  </div>
 </div>
 
-<div id="pagination">
-  <button class="page-btn" id="btn-prev" disabled>← Préc.</button>
-  <span id="page-info"></span>
-  <button class="page-btn" id="btn-next" disabled>Suiv. →</button>
-  <select id="f-page-size">
-    <option value="25">25 / page</option>
-    <option value="50" selected>50 / page</option>
-    <option value="100">100 / page</option>
-  </select>
-</div>
+<!-- TOAST -->
+<div id="toast"></div>
 
 </div><!-- /crm-app -->
 
 <script>
-// ── CONFIG ──
+// ═══════════════════════════════════════════════════════════
+// CONFIG
+// ═══════════════════════════════════════════════════════════
 const SUPABASE_URL      = 'https://tzwrzkiqdkcgaqnxntyt.supabase.co';
 const SUPABASE_ANON_KEY = 'sb_publishable_1qXmP6t8kV5Kl5LhfPcEog_iMAR3pI6';
 
-// Groupes de statuts (pour les selects avec séparateurs)
-const STATUT_GROUPS = [
-  { label: 'Par défaut',    items: ['nouveau'] },
-  { label: 'Dans le pipe',  items: ['contacte','en_discussion','solution_envoyee','relance_essai','accompagne','gagne'] },
-  { label: 'No Go',         items: ['perdu','pas_interesse','sans_suite','hors_cible','a_ferme'] },
+const STATUT_OPTIONS = [
+  ['nouveau',          'Nouveau'],
+  ['contacte',         'Contacté'],
+  ['en_discussion',    'En discussion'],
+  ['solution_envoyee', 'Solution envoyée'],
+  ['relance_essai',    'Relancé pour essai'],
+  ['accompagne',       'Accompagné'],
+  ['gagne',            'Gagné'],
+  ['perdu',            'Perdu'],
+  ['pas_interesse',    'Pas intéressé'],
+  ['sans_suite',       'Sans suite'],
+  ['hors_cible',       'Hors cible'],
+  ['a_ferme',          'A fermé'],
 ];
-const STATUTS = STATUT_GROUPS.flatMap(g => g.items);
-const LABEL = {
-  nouveau:          'Nouveau',
-  contacte:         'Contacté',
-  en_discussion:    'En discussion',
-  solution_envoyee: 'Solution envoyée',
-  relance_essai:    'Relancé pour essai',
-  accompagne:       'Accompagné',
-  gagne:            'Gagné',
-  perdu:            'Perdu',
-  pas_interesse:    'Pas intéressé',
-  sans_suite:       'Sans suite',
-  hors_cible:       'Hors cible',
-  a_ferme:          'A fermé',
-};
-const TODAY   = new Date().toISOString().slice(0,10);
+const STATUT_LABEL = Object.fromEntries(STATUT_OPTIONS);
+const STATUT_INTERESSE     = ['en_discussion', 'solution_envoyee', 'relance_essai', 'accompagne', 'gagne'];
+const STATUT_PAS_INTERESSE = ['pas_interesse', 'perdu', 'sans_suite', 'hors_cible', 'a_ferme'];
+
+const TODAY_STR = new Date().toISOString().slice(0, 10);
+const SELECT_COLS = 'place_id,name,phone,address,website,maps_url,statut,notes,rappel_le,assigne_a,prenom_gerant,nom_gerant,appels_horodates,nb_tentatives,premier_repondu_at,dernier_contact_at';
 
 const { createClient } = supabase;
 const db = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
-// ── STATE ──
-let currentUser  = null;
-let currentPage  = 0;
-let totalCount   = 0;
-let pageSize     = 50;
-let sortCol      = 'scraped_at';
-let sortAsc      = false;
-let selectedIds  = new Set();
-let debounceTimer = null;
-let filters = { search:'', statut:'', dept:'', assigne:'', rappel:'', hasEmail:false, hasPhone:false, site:'' };
+// ═══════════════════════════════════════════════════════════
+// STATE
+// ═══════════════════════════════════════════════════════════
+let currentUser   = null;
+let currentPage   = 0;
+const pageSize    = 50;
+let totalCount    = 0;
+let activeQF      = 'tous';
+let searchTerm    = '';
+let searchTimer   = null;
+let currentRows   = [];
+// Identifiants séparés pour éviter qu'ouvrir la fiche écrase l'ID du panel ouvert (et inversement)
+let sidePanelLeadId = null;
+let modalLeadId     = null;
 
-// ── AUTH ──
+const spState = { interet: null, action: null };
+
+// ═══════════════════════════════════════════════════════════
+// HELPERS
+// ═══════════════════════════════════════════════════════════
+function $(id) { return document.getElementById(id); }
+function esc(s) { return s == null ? '' : String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+
+function showError(msg) { const e = $('error-msg'); e.textContent = msg; e.classList.add('visible'); }
+function hideError()    { $('error-msg').classList.remove('visible'); }
+function showLoader(v)  { $('loader').classList.toggle('visible', v); }
+
+let toastTimer = null;
+function toast(msg, type = '') {
+  const t = $('toast');
+  t.textContent = msg;
+  t.className = type;
+  requestAnimationFrame(() => t.classList.add('show'));
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => t.classList.remove('show'), 2400);
+}
+
+function extractVille(address) {
+  if (!address) return '';
+  const m = address.match(/\d{5}\s+([^,]+)/);
+  if (m) return m[1].trim();
+  const parts = address.replace(/, France$/i, '').split(',');
+  return parts[parts.length - 1].trim();
+}
+
+function gerantName(r) {
+  const p = (r.prenom_gerant || '').trim();
+  const n = (r.nom_gerant    || '').trim();
+  return [p, n].filter(Boolean).join(' ');
+}
+
+function relTime(iso) {
+  if (!iso) return '';
+  const d = new Date(iso);
+  const diffMs = Date.now() - d.getTime();
+  const m = Math.floor(diffMs / 60000);
+  if (m < 1)    return "à l'instant";
+  if (m < 60)   return `il y a ${m} min`;
+  const h = Math.floor(m / 60);
+  if (h < 24)   return `il y a ${h} h`;
+  const dy = Math.floor(h / 24);
+  if (dy === 1) return 'hier';
+  if (dy < 7)   return `il y a ${dy} j`;
+  return d.toLocaleDateString('fr-FR', { day: '2-digit', month: 'short' });
+}
+
+function fmtDateTime(iso) {
+  if (!iso) return '';
+  const d = new Date(iso);
+  return d.toLocaleDateString('fr-FR', { day: '2-digit', month: '2-digit', year: '2-digit' })
+       + ' ' + d.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' });
+}
+
+// Statut dérivé pour l'affichage de la liste (priorité descendante)
+function deriveStatus(r) {
+  if (r.statut && STATUT_PAS_INTERESSE.includes(r.statut)) return { key: 'b-not',        label: 'Pas intéressé' };
+  if (r.statut && STATUT_INTERESSE.includes(r.statut))     return { key: 'b-interested', label: 'Intéressé'     };
+  if (r.rappel_le)                                          return { key: 'b-callback',   label: 'Rappel ' + r.rappel_le };
+  if (r.premier_repondu_at)                                 return { key: 'b-answered',   label: 'Répondu'       };
+  if ((r.nb_tentatives || 0) > 0)                           return { key: 'b-no-answer',  label: `Sans réponse · ${r.nb_tentatives}×` };
+  return { key: 'b-call', label: 'À appeler' };
+}
+
+function lastActionText(r) {
+  const calls = Array.isArray(r.appels_horodates) ? r.appels_horodates : [];
+  if (calls.length > 0) {
+    const last = calls[calls.length - 1];
+    const kind = last.type === 'répondu' ? '✅' : '❌';
+    return `${kind} ${relTime(last.ts)}`;
+  }
+  if (r.dernier_contact_at) return relTime(r.dernier_contact_at);
+  return '—';
+}
+
+// ═══════════════════════════════════════════════════════════
+// AUTH
+// ═══════════════════════════════════════════════════════════
 function showLogin() {
-  document.getElementById('login-overlay').classList.remove('hidden');
-  document.getElementById('crm-app').style.display = 'none';
+  $('login-overlay').classList.remove('hidden');
+  $('crm-app').style.display = 'none';
 }
 function showCRM(user) {
   currentUser = user;
-  document.getElementById('login-overlay').classList.add('hidden');
-  document.getElementById('crm-app').style.display = 'block';
-  document.getElementById('user-name').textContent = user.user_metadata?.name || user.email;
+  $('login-overlay').classList.add('hidden');
+  $('crm-app').style.display = 'block';
+  $('user-name').textContent = user.user_metadata?.name || user.email;
 }
 
-document.getElementById('login-btn').addEventListener('click', async () => {
-  const email = document.getElementById('login-email').value.trim();
-  const pwd   = document.getElementById('login-pwd').value;
-  const errEl = document.getElementById('login-error');
-  const btn   = document.getElementById('login-btn');
+$('login-btn').addEventListener('click', async () => {
+  const email = $('login-email').value.trim();
+  const pwd   = $('login-pwd').value;
+  const errEl = $('login-error');
+  const btn   = $('login-btn');
   errEl.textContent = '';
   if (!email || !pwd) { errEl.textContent = 'Email et mot de passe requis.'; return; }
   btn.disabled = true; btn.textContent = 'Connexion…';
   const { data, error } = await db.auth.signInWithPassword({ email, password: pwd });
   btn.disabled = false; btn.textContent = 'Se connecter';
-  if (error) { errEl.textContent = error.message === 'Invalid login credentials' ? 'Email ou mot de passe incorrect.' : error.message; return; }
+  if (error) {
+    errEl.textContent = error.message === 'Invalid login credentials'
+      ? 'Email ou mot de passe incorrect.'
+      : error.message;
+    return;
+  }
   showCRM(data.user);
   await startCRM();
 });
-document.getElementById('login-pwd').addEventListener('keydown', e => { if (e.key === 'Enter') document.getElementById('login-btn').click(); });
-document.getElementById('btn-logout').addEventListener('click', async () => { await db.auth.signOut(); currentUser = null; showLogin(); });
+$('login-pwd').addEventListener('keydown', e => { if (e.key === 'Enter') $('login-btn').click(); });
+$('btn-logout').addEventListener('click', async () => {
+  await db.auth.signOut();
+  currentUser = null;
+  showLogin();
+});
 
-// ── HELPERS ──
-function showError(msg) { const e = document.getElementById('error-msg'); e.textContent = msg; e.classList.add('visible'); }
-function hideError()    { document.getElementById('error-msg').classList.remove('visible'); }
-function showLoader(v)  { document.getElementById('loader').classList.toggle('visible', v); }
-function esc(s) { return s ? String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;') : ''; }
-function isOverdue(d) { return d && d < TODAY; }
-function extractVille(address) {
-  if (!address) return '';
-  const m = address.match(/\d{5}\s+([^,]+)/);
-  if (m) return m[1].trim();
-  // fallback : dernier fragment avant ", France"
-  const parts = address.replace(/, France$/i, '').split(',');
-  return parts[parts.length - 1].trim();
-}
+// ═══════════════════════════════════════════════════════════
+// TABS
+// ═══════════════════════════════════════════════════════════
+document.querySelectorAll('.tab-btn').forEach(b => {
+  b.addEventListener('click', () => {
+    document.querySelectorAll('.tab-btn').forEach(x => x.classList.toggle('active', x === b));
+    document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
+    $(`view-${b.dataset.view}`).classList.add('active');
+    if (b.dataset.view === 'analytics') loadAnalytics();
+  });
+});
 
-// ── BUILD QUERY ──
-function buildQuery() {
-  let q = db.from('landscapers').select(
-    'place_id,name,phone,address,website,email,maps_url,rating,review_count,statut,notes,rappel_le,assigne_a,dept,scraped_at',
-    { count: 'exact' }
-  );
-  if (filters.search) {
-    const s = filters.search.trim();
-    q = q.or(`name.ilike.%${s}%,phone.ilike.%${s}%,email.ilike.%${s}%,address.ilike.%${s}%,notes.ilike.%${s}%,assigne_a.ilike.%${s}%,dept.ilike.%${s}%`);
-  }
-  if (filters.statut)    q = q.eq('statut', filters.statut);
-  if (filters.dept)      q = q.eq('dept', filters.dept);
-  if (filters.assigne)   q = q.eq('assigne_a', filters.assigne);
-  if (filters.hasEmail)  q = q.not('email', 'is', null);
-  if (filters.hasPhone)  q = q.not('phone', 'is', null);
-  if (filters.site === 'yes') q = q.not('website', 'is', null).neq('website', '');
-  if (filters.site === 'no')  q = q.or('website.is.null,website.eq.');
-  if (filters.rappel === 'today')    q = q.eq('rappel_le', TODAY);
-  if (filters.rappel === 'overdue')  q = q.lt('rappel_le', TODAY).not('rappel_le', 'is', null);
-  if (filters.rappel === 'upcoming') {
-    const in7 = new Date(); in7.setDate(in7.getDate() + 7);
-    q = q.gte('rappel_le', TODAY).lte('rappel_le', in7.toISOString().slice(0,10));
+// ═══════════════════════════════════════════════════════════
+// QUERY (filtres rapides + recherche)
+// ═══════════════════════════════════════════════════════════
+function applyQuickFilter(q) {
+  switch (activeQF) {
+    case 'a_appeler':
+      // pas encore de tentative ET (statut NULL OU 'nouveau')
+      // .or() corrige le bug NULL de SQL "NOT IN" qui exclut silencieusement les NULL
+      q = q.eq('nb_tentatives', 0).or('statut.is.null,statut.eq.nouveau');
+      break;
+    case 'repondu':
+      q = q.not('premier_repondu_at', 'is', null);
+      break;
+    case 'sans_reponse':
+      q = q.gt('nb_tentatives', 0).is('premier_repondu_at', null);
+      break;
+    case 'rappel':
+      q = q.not('rappel_le', 'is', null);
+      break;
+    case 'interesse':
+      q = q.in('statut', STATUT_INTERESSE);
+      break;
+    case 'pas_interesse':
+      q = q.in('statut', STATUT_PAS_INTERESSE);
+      break;
   }
   return q;
 }
 
-// ── LOAD PAGE ──
+function buildQuery() {
+  let q = db.from('landscapers').select(SELECT_COLS, { count: 'exact' });
+  if (searchTerm) {
+    const s = searchTerm.trim().replace(/[%,()]/g, '');
+    if (s) q = q.or(`name.ilike.%${s}%,address.ilike.%${s}%`);
+  }
+  q = applyQuickFilter(q);
+  return q;
+}
+
+function chooseSort(qf) {
+  // tri intelligent selon le filtre
+  if (qf === 'rappel')        return { col: 'rappel_le',          asc: true  };
+  if (qf === 'a_appeler')     return { col: 'name',               asc: true  };
+  if (qf === 'sans_reponse')  return { col: 'dernier_contact_at', asc: false };
+  return { col: 'dernier_contact_at', asc: false };
+}
+
+// ═══════════════════════════════════════════════════════════
+// LOAD PAGE
+// ═══════════════════════════════════════════════════════════
 async function loadPage() {
   showLoader(true); hideError();
   const from = currentPage * pageSize;
-  const { data, error, count } = await buildQuery()
-    .order(sortCol, { ascending: sortAsc })
-    .range(from, from + pageSize - 1);
+  const sort = chooseSort(activeQF);
+
+  let q = buildQuery().order(sort.col, { ascending: sort.asc, nullsFirst: false });
+  // tri secondaire stable
+  if (sort.col !== 'name') q = q.order('name', { ascending: true });
+
+  const { data, error, count } = await q.range(from, from + pageSize - 1);
   showLoader(false);
   if (error) { showError('Erreur Supabase : ' + error.message); return; }
   totalCount = count ?? 0;
-  renderTable(data || []);
+  currentRows = data || [];
+  renderTable(currentRows);
   renderPagination();
-  updateSortHeaders();
 }
 
-// ── RENDER TABLE ──
+// ═══════════════════════════════════════════════════════════
+// RENDER TABLE
+// ═══════════════════════════════════════════════════════════
 function renderTable(rows) {
-  const tbody = document.getElementById('tbody');
+  const tbody = $('tbody');
+  if (rows.length === 0) {
+    tbody.innerHTML = `<tr><td colspan="6" class="empty-msg">Aucun lead pour ce filtre.</td></tr>`;
+    return;
+  }
   tbody.innerHTML = rows.map(r => {
-    const isSelected = selectedIds.has(r.place_id);
-    const rating = r.rating ? `★${r.rating.toFixed(1)} <small style="color:var(--muted)">(${r.review_count||0})</small>` : '<span style="color:var(--muted)">—</span>';
-    const emailCell = r.email ? `<a href="mailto:${esc(r.email)}" title="${esc(r.email)}">${esc(r.email)}</a>` : '<span style="color:var(--muted)">—</span>';
-    return `<tr data-id="${esc(r.place_id)}" class="${isSelected ? 'selected' : ''}">
-      <td class="col-check"><input type="checkbox" class="row-check" data-id="${esc(r.place_id)}" ${isSelected ? 'checked' : ''} /></td>
-      <td class="col-dept">${esc(r.dept || '—')}</td>
-      <td class="col-name">${esc(r.name)}</td>
-      <td class="col-ville">${esc(extractVille(r.address))}</td>
-      <td class="col-phone">${r.phone ? `<a href="tel:${esc(r.phone)}">${esc(r.phone)}</a>` : '<span style="color:var(--muted)">—</span>'}</td>
-      <td class="col-email">${emailCell}</td>
-      <td class="col-rating">${rating}</td>
-      <td class="col-status">${renderStatus(r)}</td>
-      <td class="col-notes notes-cell">${renderNotes(r)}</td>
-      <td class="col-recall">${renderRappel(r)}</td>
-      <td class="col-links">${renderLinks(r)}</td>
+    const st = deriveStatus(r);
+    const ger = gerantName(r);
+    const ville = extractVille(r.address);
+    return `<tr data-id="${esc(r.place_id)}">
+      <td class="col-name">
+        <div>${esc(r.name)}</div>
+        ${r.phone ? `<div class="sub-line">${esc(r.phone)}</div>` : ''}
+      </td>
+      <td class="col-gerant">${ger ? esc(ger) : '<span style="color:var(--muted-2)">—</span>'}</td>
+      <td class="col-ville">${ville ? esc(ville) : '<span style="color:var(--muted-2)">—</span>'}</td>
+      <td class="col-statut"><span class="badge ${st.key}">${esc(st.label)}</span></td>
+      <td class="col-action">${esc(lastActionText(r))}</td>
+      <td class="col-actions">
+        <div class="row-actions">
+          <button class="ra-btn ra-yes"  data-act="yes"  data-id="${esc(r.place_id)}">✅ Répondu</button>
+          <button class="ra-btn ra-no"   data-act="no"   data-id="${esc(r.place_id)}">❌ Sans réponse</button>
+          <button class="ra-btn ra-card" data-act="card" data-id="${esc(r.place_id)}" title="Fiche complète">📋</button>
+        </div>
+      </td>
     </tr>`;
   }).join('');
 
-  tbody.querySelectorAll('.badge').forEach(el => el.addEventListener('click', onBadgeClick));
-  tbody.querySelectorAll('.notes-text').forEach(el => el.addEventListener('click', onNotesClick));
-  tbody.querySelectorAll('.rappel-input').forEach(el => el.addEventListener('change', onRappelChange));
-  tbody.querySelectorAll('.row-check').forEach(el => el.addEventListener('change', onRowCheck));
-  document.getElementById('select-all').checked = rows.length > 0 && rows.every(r => selectedIds.has(r.place_id));
+  tbody.querySelectorAll('.ra-btn').forEach(btn => btn.addEventListener('click', onRowAction));
 }
 
-function renderStatus(r) {
-  const s = r.statut || 'nouveau';
-  return `<span class="badge ${s}" data-id="${esc(r.place_id)}" data-statut="${s}">${LABEL[s]||s}</span>`;
-}
-function renderNotes(r) {
-  const txt = r.notes ? esc(r.notes).replace(/\n/g,'<br>') : '';
-  return `<div class="notes-text" data-id="${esc(r.place_id)}" data-notes="${esc(r.notes||'')}">${txt}</div>`;
-}
-function renderRappel(r) {
-  const od = isOverdue(r.rappel_le) ? ' overdue' : '';
-  return `<input type="date" class="rappel-input${od}" data-id="${esc(r.place_id)}" value="${esc(r.rappel_le||'')}" />`;
-}
-function renderLinks(r) {
-  const parts = [];
-  if (r.maps_url) parts.push(`<a href="${esc(r.maps_url)}" target="_blank">Maps</a>`);
-  if (r.website)  parts.push(`<a href="${esc(r.website)}" target="_blank">Web</a>`);
-  return parts.join(' · ') || '<span style="color:var(--muted)">—</span>';
+function onRowAction(e) {
+  const id  = e.currentTarget.dataset.id;
+  const act = e.currentTarget.dataset.act;
+  if (act === 'yes')  openSidePanel(id);
+  if (act === 'no')   recordNoAnswer(id);
+  if (act === 'card') openLeadModal(id);
 }
 
-// ── SORT ──
-function updateSortHeaders() {
-  document.querySelectorAll('thead th.sortable').forEach(th => {
-    th.classList.remove('sort-asc','sort-desc');
-    if (th.dataset.col === sortCol) th.classList.add(sortAsc ? 'sort-asc' : 'sort-desc');
-  });
+// ═══════════════════════════════════════════════════════════
+// PAGINATION
+// ═══════════════════════════════════════════════════════════
+function renderPagination() {
+  const totalPages = Math.max(1, Math.ceil(totalCount / pageSize));
+  $('page-info').textContent = `Page ${currentPage + 1} / ${totalPages} — ${totalCount.toLocaleString('fr-FR')} leads`;
+  $('btn-prev').disabled = currentPage === 0;
+  $('btn-next').disabled = currentPage >= totalPages - 1;
 }
-document.querySelectorAll('thead th.sortable').forEach(th => {
-  th.addEventListener('click', () => {
-    if (sortCol === th.dataset.col) sortAsc = !sortAsc;
-    else { sortCol = th.dataset.col; sortAsc = false; }
+$('btn-prev').addEventListener('click', () => { currentPage--; loadPage(); });
+$('btn-next').addEventListener('click', () => { currentPage++; loadPage(); });
+
+// ═══════════════════════════════════════════════════════════
+// SEARCH + QUICK FILTERS
+// ═══════════════════════════════════════════════════════════
+$('search').addEventListener('input', e => {
+  clearTimeout(searchTimer);
+  searchTimer = setTimeout(() => {
+    searchTerm = e.target.value;
+    currentPage = 0;
+    loadPage();
+  }, 250);
+});
+
+document.querySelectorAll('.qf-chip').forEach(chip => {
+  chip.addEventListener('click', () => {
+    document.querySelectorAll('.qf-chip').forEach(c => c.classList.toggle('active', c === chip));
+    activeQF = chip.dataset.qf;
     currentPage = 0;
     loadPage();
   });
 });
 
-// ── PAGINATION ──
-function renderPagination() {
-  const totalPages = Math.ceil(totalCount / pageSize) || 1;
-  document.getElementById('page-info').textContent =
-    `Page ${currentPage+1}/${totalPages} — ${totalCount.toLocaleString('fr-FR')} leads`;
-  document.getElementById('btn-prev').disabled = currentPage === 0;
-  document.getElementById('btn-next').disabled = currentPage >= totalPages - 1;
-}
-document.getElementById('btn-prev').addEventListener('click', () => { currentPage--; loadPage(); });
-document.getElementById('btn-next').addEventListener('click', () => { currentPage++; loadPage(); });
-document.getElementById('f-page-size').addEventListener('change', e => {
-  pageSize = parseInt(e.target.value); currentPage = 0; loadPage();
-});
-
-// ── UPDATE ──
-async function updateField(id, fields) {
-  const { error } = await db.from('landscapers').update(fields).eq('place_id', id);
-  if (error) showError('Erreur sauvegarde : ' + error.message);
-  else hideError();
-}
-
-// ── STATUS BADGE ──
-function onBadgeClick(e) {
-  e.stopPropagation();
-  document.querySelectorAll('.status-dropdown').forEach(d => d.remove());
-
-  const badge = e.currentTarget;
-  const id = badge.dataset.id, cur = badge.dataset.statut || 'nouveau';
-
-  const dropdown = document.createElement('div');
-  dropdown.className = 'status-dropdown';
-
-  STATUT_GROUPS.forEach(group => {
-    const header = document.createElement('div');
-    header.className = 'sd-group';
-    header.textContent = group.label;
-    dropdown.appendChild(header);
-
-    group.items.forEach(s => {
-      const opt = document.createElement('div');
-      opt.className = 'sd-option';
-      const b = document.createElement('span');
-      b.className = `badge ${s}`;
-      b.textContent = LABEL[s];
-      if (s === cur) b.style.outline = '2px solid currentColor';
-      opt.appendChild(b);
-      opt.addEventListener('click', async ev => {
-        ev.stopPropagation();
-        dropdown.remove();
-        if (s === cur) return;
-        await updateField(id, { statut: s });
-        badge.className = `badge ${s}`;
-        badge.textContent = LABEL[s];
-        badge.dataset.statut = s;
-        loadStats();
-      });
-      dropdown.appendChild(opt);
-    });
-  });
-
-  const rect = badge.getBoundingClientRect();
-  dropdown.style.visibility = 'hidden';
-  dropdown.style.left = rect.left + 'px';
-  dropdown.style.top  = (rect.bottom + 4) + 'px';
-  document.body.appendChild(dropdown);
-
-  // Repositionner si le dropdown sort de l'écran
-  const ddH = dropdown.offsetHeight;
-  const ddW = dropdown.offsetWidth;
-  if (rect.bottom + 4 + ddH > window.innerHeight) {
-    dropdown.style.top = Math.max(4, rect.top - ddH - 4) + 'px';
-  }
-  if (rect.left + ddW > window.innerWidth) {
-    dropdown.style.left = Math.max(4, window.innerWidth - ddW - 8) + 'px';
-  }
-  dropdown.style.visibility = '';
-
-  // Fermer au clic extérieur
-  setTimeout(() => {
-    document.addEventListener('click', function close() {
-      dropdown.remove();
-      document.removeEventListener('click', close);
-    }, { once: true });
-  }, 0);
-}
-
-// ── NOTES ──
-function onNotesClick(e) {
-  const div = e.currentTarget;
-  if (div.querySelector('textarea')) return;
-  const id = div.dataset.id, cur = div.dataset.notes || '';
-  const ta = document.createElement('textarea'); ta.className='notes-ta'; ta.value=cur;
-  const ind = document.createElement('span'); ind.className='save-indicator';
-  div.innerHTML=''; div.appendChild(ta); div.appendChild(ind); ta.focus();
-  let t = null;
-  ta.addEventListener('input', () => { clearTimeout(t); ind.textContent='…'; t=setTimeout(async()=>{ await updateField(id,{notes:ta.value}); div.dataset.notes=ta.value; ind.textContent='✓'; },1200); });
-  ta.addEventListener('blur', () => {
-    clearTimeout(t); updateField(id,{notes:ta.value}); div.dataset.notes=ta.value;
-    div.innerHTML = ta.value ? esc(ta.value).replace(/\n/g,'<br>') : '';
-    div.addEventListener('click', onNotesClick, {once:true});
-  });
-}
-
-// ── RAPPEL ──
-async function onRappelChange(e) {
-  const inp=e.currentTarget, val=inp.value||null;
-  inp.classList.toggle('overdue', isOverdue(val));
-  await updateField(inp.dataset.id, { rappel_le: val });
-}
-
-// ── BULK ──
-function onRowCheck(e) {
-  const id = e.currentTarget.dataset.id;
-  const row = e.currentTarget.closest('tr');
-  if (e.currentTarget.checked) { selectedIds.add(id); row.classList.add('selected'); }
-  else { selectedIds.delete(id); row.classList.remove('selected'); }
-  updateBulkBar();
-}
-document.getElementById('select-all').addEventListener('change', e => {
-  document.querySelectorAll('.row-check').forEach(cb => {
-    cb.checked = e.target.checked;
-    const row = cb.closest('tr');
-    if (e.target.checked) { selectedIds.add(cb.dataset.id); row.classList.add('selected'); }
-    else { selectedIds.delete(cb.dataset.id); row.classList.remove('selected'); }
-  });
-  updateBulkBar();
-});
-function updateBulkBar() {
-  const bar = document.getElementById('bulk-bar');
-  bar.classList.toggle('visible', selectedIds.size > 0);
-  document.getElementById('bulk-count').textContent = `${selectedIds.size} sélectionné(s)`;
-}
-document.querySelectorAll('.bulk-btn').forEach(btn => {
-  btn.addEventListener('click', async () => {
-    const ids = [...selectedIds];
-    const { error } = await db.from('landscapers').update({ statut: btn.dataset.statut }).in('place_id', ids);
-    if (!error) { selectedIds.clear(); updateBulkBar(); loadPage(); loadStats(); }
-    else showError('Erreur bulk : ' + error.message);
-  });
-});
-document.getElementById('bulk-cancel').addEventListener('click', () => {
-  selectedIds.clear();
-  document.querySelectorAll('.row-check').forEach(cb => cb.checked=false);
-  document.querySelectorAll('tbody tr').forEach(tr => tr.classList.remove('selected'));
-  document.getElementById('select-all').checked = false;
-  updateBulkBar();
-});
-
-// ── EXPORT CSV ──
-document.getElementById('btn-export').addEventListener('click', async () => {
-  const btn = document.getElementById('btn-export');
-  btn.textContent = '…';
-  const { data, error } = await buildQuery().order(sortCol, { ascending: sortAsc });
-  btn.textContent = '⬇ CSV';
-  if (error || !data) { showError('Erreur export'); return; }
-  const headers = ['Dept','Ville','Nom','Téléphone','Email','Adresse','Note','Avis','Statut','Notes','Rappel','Assigné','Maps','Site Web'];
-  const rows = data.map(r => [
-    r.dept||'', extractVille(r.address), r.name||'', r.phone||'', r.email||'',
-    r.address||'', r.rating||'', r.review_count||'',
-    r.statut||'nouveau', r.notes||'', r.rappel_le||'', r.assigne_a||'',
-    r.maps_url||'', r.website||''
-  ]);
-  const csv = 'sep=;\r\n' + [headers,...rows].map(row =>
-    row.map(c => `"${String(c).replace(/"/g,'""')}"`).join(';')
-  ).join('\r\n');
-  // Encode en Windows-1252 : Excel Windows lit les CSV en cette locale par défaut.
-  // Les caractères hors-plage (rares) sont remplacés par '?'.
-  const W1252 = {8364:128,8218:130,402:131,8222:132,8230:133,8224:134,8225:135,710:136,8240:137,352:138,8249:139,338:140,381:142,8216:145,8217:146,8220:147,8221:148,8226:149,8211:150,8212:151,732:152,8482:153,353:154,8250:155,339:156,382:158,376:159};
-  const bytes = new Uint8Array(csv.length);
-  for (let i = 0; i < csv.length; i++) {
-    const c = csv.charCodeAt(i);
-    bytes[i] = c < 128 ? c : (c < 256 ? c : (W1252[c] ?? 63));
-  }
-  const blob = new Blob([bytes], { type: 'text/csv;charset=windows-1252' });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href=url; a.download=`paysagistes_${TODAY}.csv`; a.click();
-  URL.revokeObjectURL(url);
-});
-
-// ── STATS ──
-async function loadStats() {
-  try {
-    const { count: total } = await db.from('landscapers').select('place_id',{count:'exact',head:true});
-    document.getElementById('s-total').textContent = `${(total||0).toLocaleString('fr-FR')} total`;
-    const { count: today } = await db.from('landscapers').select('place_id',{count:'exact',head:true}).gte('scraped_at',TODAY+'T00:00:00');
-    document.getElementById('s-today').textContent = `+${today||0} aujourd'hui`;
-    const HEADER_STATUTS = ['contacte','en_discussion','solution_envoyee','gagne','perdu','hors_cible'];
-    for (const s of HEADER_STATUTS) {
-      const el = document.getElementById(`s-${s}`);
-      if (!el) continue;
-      const { count } = await db.from('landscapers').select('place_id',{count:'exact',head:true}).eq('statut',s);
-      el.textContent = `${LABEL[s]} ${count||0}`;
-    }
-  } catch (_) {}
-}
-
-// Clic sur stat chip → filtre par statut
-document.querySelectorAll('.stat-chip[data-statut]').forEach(chip => {
-  chip.addEventListener('click', () => {
-    const s = chip.dataset.statut;
-    const sel = document.getElementById('f-statut');
-    sel.value = filters.statut === s ? '' : s;
-    filters.statut = sel.value;
-    currentPage = 0; loadPage();
-  });
-});
-
-// ── FILTRES ──
-async function loadFilterOptions() {
-  try {
-    const { data: depts } = await db.rpc('crm_depts');
-    if (depts) {
-      const fd = document.getElementById('f-dept');
-      depts.forEach(d => { const o=document.createElement('option'); o.value=d.dept; o.textContent=`${d.dept} (${d.nb})`; fd.appendChild(o); });
-    }
-  } catch(_) {}
-  try {
-    const { data: assignes } = await db.rpc('crm_assignes');
-    if (assignes) {
-      const fa = document.getElementById('f-assigne');
-      assignes.forEach(a => { const o=document.createElement('option'); o.value=a.assigne_a; o.textContent=a.assigne_a; fa.appendChild(o); });
-    }
-  } catch(_) {}
-}
-
-function resetFilters() {
-  filters = { search:'', statut:'', dept:'', assigne:'', rappel:'', hasEmail:false, hasPhone:false, site:'' };
-  document.getElementById('search').value = '';
-  ['f-statut','f-dept','f-assigne','f-rappel','f-site'].forEach(id => document.getElementById(id).value='');
-  document.getElementById('f-has-email').checked = false;
-  document.getElementById('f-has-phone').checked = false;
-  currentPage = 0; loadPage();
-}
-
-// Ctrl+F / Cmd+F → focus la recherche
 document.addEventListener('keydown', e => {
   if ((e.ctrlKey || e.metaKey) && e.key === 'f') {
-    const searchEl = document.getElementById('search');
-    if (searchEl) { e.preventDefault(); searchEl.focus(); searchEl.select(); }
+    const s = $('search');
+    if (s) { e.preventDefault(); s.focus(); s.select(); }
+  }
+  if (e.key === 'Escape') {
+    closeSidePanel();
+    closeLeadModal();
   }
 });
 
-document.getElementById('search').addEventListener('input', e => {
-  clearTimeout(debounceTimer);
-  debounceTimer = setTimeout(() => { filters.search=e.target.value; currentPage=0; loadPage(); }, 400);
-});
-[['f-statut','statut'],['f-dept','dept'],['f-assigne','assigne'],['f-rappel','rappel'],['f-site','site']].forEach(([id,key]) => {
-  document.getElementById(id).addEventListener('change', e => { filters[key]=e.target.value; currentPage=0; loadPage(); });
-});
-document.getElementById('f-has-email').addEventListener('change', e => { filters.hasEmail=e.target.checked; currentPage=0; loadPage(); });
-document.getElementById('f-has-phone').addEventListener('change', e => { filters.hasPhone=e.target.checked; currentPage=0; loadPage(); });
-document.getElementById('btn-reset').addEventListener('click', resetFilters);
-
-// ── REALTIME ──
-function initRealtime() {
-  const dot = document.getElementById('realtime-dot');
-  db.channel('landscapers-crm')
-    .on('postgres_changes', { event:'*', schema:'public', table:'landscapers' }, () => loadStats())
-    .subscribe(s => dot.classList.toggle('connected', s==='SUBSCRIBED'));
+// ═══════════════════════════════════════════════════════════
+// COUNTS pour les chips
+// ═══════════════════════════════════════════════════════════
+async function loadCounts() {
+  const tasks = [
+    { key: 'tous',          fn: q => q },
+    { key: 'a_appeler',     fn: q => q.eq('nb_tentatives', 0).or('statut.is.null,statut.eq.nouveau') },
+    { key: 'repondu',       fn: q => q.not('premier_repondu_at', 'is', null) },
+    { key: 'sans_reponse',  fn: q => q.gt('nb_tentatives', 0).is('premier_repondu_at', null) },
+    { key: 'rappel',        fn: q => q.not('rappel_le', 'is', null) },
+    { key: 'interesse',     fn: q => q.in('statut', STATUT_INTERESSE) },
+    { key: 'pas_interesse', fn: q => q.in('statut', STATUT_PAS_INTERESSE) },
+  ];
+  const results = await Promise.all(tasks.map(async t => {
+    const q = db.from('landscapers').select('place_id', { count: 'exact', head: true });
+    const { count } = await t.fn(q);
+    return [t.key, count ?? 0];
+  }));
+  for (const [k, c] of results) {
+    const el = $(`c-${k}`);
+    if (el) el.textContent = c.toLocaleString('fr-FR');
+  }
 }
 
-// ── START ──
+// ═══════════════════════════════════════════════════════════
+// SAVE : Sans réponse (1 clic)
+// ═══════════════════════════════════════════════════════════
+async function recordNoAnswer(id) {
+  const row = currentRows.find(r => r.place_id === id);
+  if (!row) return;
+
+  // Désactive les boutons de la ligne pendant la requête (anti double-clic)
+  const btnEls = Array.from(document.querySelectorAll(`.ra-btn[data-id="${id}"]`));
+  if (btnEls.some(b => b.disabled)) return;
+  btnEls.forEach(b => { b.disabled = true; });
+
+  const calls = Array.isArray(row.appels_horodates) ? [...row.appels_horodates] : [];
+  const nowIso = new Date().toISOString();
+  calls.push({ type: 'sans_réponse', ts: nowIso });
+  const updates = {
+    appels_horodates: calls,
+    nb_tentatives: (row.nb_tentatives || 0) + 1,
+    dernier_contact_at: nowIso,
+  };
+
+  const { error } = await db.from('landscapers').update(updates).eq('place_id', id);
+  if (error) {
+    btnEls.forEach(b => { b.disabled = false; });
+    toast('Erreur : ' + error.message, 'error');
+    return;
+  }
+  // Mise à jour UI uniquement après confirmation DB
+  Object.assign(row, updates);
+  renderTable(currentRows);
+  toast('Sans réponse enregistré', 'success');
+  loadCounts();
+}
+
+// ═══════════════════════════════════════════════════════════
+// SIDE PANEL : Répondu
+// ═══════════════════════════════════════════════════════════
+function openSidePanel(id) {
+  const row = currentRows.find(r => r.place_id === id);
+  if (!row) return;
+  sidePanelLeadId = id;
+  $('sp-title').textContent = row.name || '—';
+  const ger = gerantName(row);
+  const ville = extractVille(row.address);
+  $('sp-sub').textContent = [ger, ville].filter(Boolean).join(' · ') || (row.phone || '');
+  $('sp-duree').value = '';
+  $('sp-note').value  = '';
+  $('sp-rappel-date').value = '';
+  $('sp-rappel-date').style.display = 'none';
+  spState.interet = null;
+  spState.action  = null;
+  document.querySelectorAll('#sp-int .opt-btn, #sp-act .opt-btn').forEach(b => b.classList.remove('selected'));
+  $('panel-overlay').classList.add('show');
+  $('side-panel').classList.add('show');
+  $('side-panel').setAttribute('aria-hidden', 'false');
+  setTimeout(() => $('sp-duree').focus(), 200);
+}
+
+function closeSidePanel() {
+  $('panel-overlay').classList.remove('show');
+  $('side-panel').classList.remove('show');
+  $('side-panel').setAttribute('aria-hidden', 'true');
+  sidePanelLeadId = null;
+}
+
+$('sp-close').addEventListener('click', closeSidePanel);
+$('sp-cancel').addEventListener('click', closeSidePanel);
+$('panel-overlay').addEventListener('click', closeSidePanel);
+
+document.querySelectorAll('#sp-int .opt-btn').forEach(b => {
+  b.addEventListener('click', () => {
+    spState.interet = b.dataset.int;
+    document.querySelectorAll('#sp-int .opt-btn').forEach(x => x.classList.toggle('selected', x === b));
+  });
+});
+document.querySelectorAll('#sp-act .opt-btn').forEach(b => {
+  b.addEventListener('click', () => {
+    spState.action = b.dataset.act;
+    document.querySelectorAll('#sp-act .opt-btn').forEach(x => x.classList.toggle('selected', x === b));
+    $('sp-rappel-date').style.display = (b.dataset.act === 'rappel') ? 'block' : 'none';
+    if (b.dataset.act === 'rappel' && !$('sp-rappel-date').value) {
+      const d = new Date(); d.setDate(d.getDate() + 7);
+      $('sp-rappel-date').value = d.toISOString().slice(0, 10);
+    }
+  });
+});
+
+$('sp-save').addEventListener('click', async () => {
+  // Capture l'ID au moment du clic — il ne pourra plus être écrasé par l'ouverture d'une fiche entretemps
+  const leadId = sidePanelLeadId;
+  if (!leadId) return;
+  const row = currentRows.find(r => r.place_id === leadId);
+  if (!row) return;
+
+  const btn = $('sp-save');
+  btn.disabled = true; btn.textContent = 'Enregistrement…';
+
+  const nowIso = new Date().toISOString();
+  const duree  = parseInt($('sp-duree').value, 10);
+  const note   = $('sp-note').value.trim();
+  const calls  = Array.isArray(row.appels_horodates) ? [...row.appels_horodates] : [];
+  calls.push({
+    type: 'répondu',
+    ts: nowIso,
+    note: note || '',
+    interet: spState.interet,
+    duree_min: Number.isFinite(duree) ? duree : 0,
+  });
+
+  const updates = {
+    appels_horodates: calls,
+    nb_tentatives: (row.nb_tentatives || 0) + 1,
+    dernier_contact_at: nowIso,
+    premier_repondu_at: row.premier_repondu_at || nowIso,
+  };
+
+  // Map "Prochaine action" → statut + rappel_le
+  if (spState.action === 'demo')   updates.statut = 'en_discussion';
+  if (spState.action === 'non')    updates.statut = 'pas_interesse';
+  if (spState.action === 'rappel') {
+    const r = $('sp-rappel-date').value;
+    if (r) updates.rappel_le = r;
+    if (!STATUT_INTERESSE.includes(row.statut) && !STATUT_PAS_INTERESSE.includes(row.statut)) {
+      updates.statut = 'contacte';
+    }
+  }
+  // Si intérêt chaud/tiède sans action explicite → contacte par défaut
+  if (!updates.statut && (spState.interet === 'chaud' || spState.interet === 'tiede')
+      && !STATUT_INTERESSE.includes(row.statut)) {
+    updates.statut = 'contacte';
+  }
+
+  const { error } = await db.from('landscapers').update(updates).eq('place_id', leadId);
+  btn.disabled = false; btn.textContent = 'Enregistrer';
+
+  if (error) {
+    toast('Erreur : ' + error.message, 'error');
+    return;
+  }
+  Object.assign(row, updates);
+  renderTable(currentRows);
+  closeSidePanel();
+  toast('Appel enregistré', 'success');
+  loadCounts();
+});
+
+// ═══════════════════════════════════════════════════════════
+// MODAL : Fiche complète
+// ═══════════════════════════════════════════════════════════
+function buildStatutSelect() {
+  const sel = $('lm-statut');
+  sel.innerHTML = STATUT_OPTIONS.map(([k, l]) => `<option value="${k}">${l}</option>`).join('');
+}
+
+function openLeadModal(id) {
+  const row = currentRows.find(r => r.place_id === id);
+  if (!row) return;
+  modalLeadId = id;
+  buildStatutSelect();
+
+  $('lm-name').textContent = row.name || '—';
+  const ger = gerantName(row);
+  const ville = extractVille(row.address);
+  $('lm-gerant').innerHTML = ger   ? `👤 ${esc(ger)}`   : '';
+  $('lm-ville').innerHTML  = ville ? `📍 ${esc(ville)}` : '';
+  $('lm-phone').innerHTML  = row.phone   ? `📞 <a href="tel:${esc(row.phone)}">${esc(row.phone)}</a>` : '';
+  $('lm-web').innerHTML    = row.website ? `🌐 <a href="${esc(row.website)}" target="_blank" rel="noopener">site</a>` : '';
+
+  const callBtn = $('lm-call-now');
+  if (row.phone) {
+    callBtn.href = 'tel:' + row.phone;
+    callBtn.style.display = 'inline-flex';
+  } else {
+    callBtn.style.display = 'none';
+  }
+
+  // Timeline
+  const calls = Array.isArray(row.appels_horodates) ? [...row.appels_horodates] : [];
+  calls.sort((a, b) => (b.ts || '').localeCompare(a.ts || ''));
+  const tl = $('lm-timeline');
+  if (calls.length === 0) {
+    tl.innerHTML = `<li class="tl-empty">Aucun appel enregistré pour l'instant.</li>`;
+  } else {
+    tl.innerHTML = calls.map(c => {
+      const isYes = c.type === 'répondu';
+      const intCls = c.interet ? ` ${c.interet}` : '';
+      const intTxt = c.interet ? c.interet.toUpperCase() + (c.duree_min ? ` · ${c.duree_min} min` : '') : '';
+      return `<li>
+        <div class="tl-head">
+          <span class="tl-type ${isYes ? 'repondu' : 'sans_reponse'}">${isYes ? 'Répondu' : 'Sans réponse'}</span>
+          <span class="tl-date">${esc(fmtDateTime(c.ts))}</span>
+          ${intTxt ? `<span class="tl-int${intCls}">${esc(intTxt)}</span>` : ''}
+        </div>
+        ${c.note ? `<div class="tl-note">${esc(c.note)}</div>` : ''}
+      </li>`;
+    }).join('');
+  }
+
+  // Heures de réponse (mini bar 0-23h)
+  const hb = $('lm-hours-bar');
+  const hours = new Array(24).fill(0);
+  calls.forEach(c => { if (c.type === 'répondu' && c.ts) hours[new Date(c.ts).getHours()]++; });
+  hb.innerHTML = hours.map((h, i) => {
+    const lbl = (i % 6 === 0) ? `<span class="hour-label">${i}h</span>` : '';
+    return `<div class="hour-cell ${h ? 'has-resp' : ''}" title="${i}h : ${h} appel(s) répondu(s)">${lbl}</div>`;
+  }).join('');
+
+  // Champs éditables
+  $('lm-statut').value  = row.statut || 'nouveau';
+  $('lm-notes').value   = row.notes || '';
+  $('lm-rappel').value  = row.rappel_le || '';
+  $('lm-assigne').value = row.assigne_a || '';
+
+  $('lead-modal').classList.add('show');
+}
+
+function closeLeadModal() {
+  $('lead-modal').classList.remove('show');
+  modalLeadId = null;
+}
+$('lm-close').addEventListener('click', closeLeadModal);
+$('lead-modal').addEventListener('click', e => { if (e.target === $('lead-modal')) closeLeadModal(); });
+
+$('lm-save').addEventListener('click', async () => {
+  // Capture l'ID au moment du clic (cf. fix race condition)
+  const leadId = modalLeadId;
+  if (!leadId) return;
+  const row = currentRows.find(r => r.place_id === leadId);
+  const btn = $('lm-save');
+  btn.disabled = true; btn.textContent = 'Enregistrement…';
+  const updates = {
+    statut: $('lm-statut').value,
+    notes: $('lm-notes').value || null,
+    rappel_le: $('lm-rappel').value || null,
+    assigne_a: $('lm-assigne').value.trim() || null,
+  };
+  const { error } = await db.from('landscapers').update(updates).eq('place_id', leadId);
+  btn.disabled = false; btn.textContent = 'Enregistrer';
+  if (error) { toast('Erreur : ' + error.message, 'error'); return; }
+  if (row) Object.assign(row, updates);
+  renderTable(currentRows);
+  closeLeadModal();
+  toast('Lead mis à jour', 'success');
+  loadCounts();
+});
+
+// ═══════════════════════════════════════════════════════════
+// ANALYTICS
+// ═══════════════════════════════════════════════════════════
+const DAY_LABELS = ['Lun', 'Mar', 'Mer', 'Jeu', 'Ven', 'Sam', 'Dim'];
+
+let analyticsLoaded = false;
+async function loadAnalytics() {
+  if (analyticsLoaded) return;
+  $('analytics-loader').style.display = 'block';
+  $('analytics-content').style.display = 'none';
+
+  // On récupère tous les leads ayant au moins une tentative.
+  // Pour scaler : on paginera si > 1000.
+  let all = [];
+  let from = 0; const step = 1000;
+  while (true) {
+    const { data, error } = await db
+      .from('landscapers')
+      .select('appels_horodates,nb_tentatives,dernier_contact_at')
+      .gt('nb_tentatives', 0)
+      .order('dernier_contact_at', { ascending: false, nullsFirst: false })
+      .range(from, from + step - 1);
+    if (error) { showError('Analytics : ' + error.message); break; }
+    all = all.concat(data || []);
+    if (!data || data.length < step) break;
+    from += step;
+    if (from > 10000) break;
+  }
+
+  // Aggrège tous les appels
+  const calls = [];
+  for (const r of all) {
+    if (Array.isArray(r.appels_horodates)) {
+      for (const c of r.appels_horodates) if (c && c.ts) calls.push(c);
+    }
+  }
+
+  const today = new Date(); today.setHours(0, 0, 0, 0);
+  const weekStart = new Date(today); const dow = (weekStart.getDay() + 6) % 7; weekStart.setDate(weekStart.getDate() - dow);
+
+  let todayCalls = 0, weekCalls = 0, totalAns = 0, totalNoAns = 0;
+  // hourBuckets[hour] = { ans, noAns }
+  const hourBuckets = Array.from({ length: 24 }, () => ({ ans: 0, noAns: 0 }));
+  // dayBuckets[0=Lun..6=Dim]
+  const dayBuckets  = Array.from({ length: 7 },  () => ({ ans: 0, noAns: 0 }));
+  // heatmap[day][hour]
+  const heatBuckets = Array.from({ length: 7 },  () => Array.from({ length: 24 }, () => ({ ans: 0, noAns: 0 })));
+
+  for (const c of calls) {
+    const d = new Date(c.ts);
+    if (Number.isNaN(d.getTime())) continue;
+    const isAns = c.type === 'répondu';
+    if (isAns) totalAns++; else totalNoAns++;
+    if (d >= today) todayCalls++;
+    if (d >= weekStart) weekCalls++;
+    const h = d.getHours();
+    const wd = (d.getDay() + 6) % 7; // Lun=0
+    const bucket = isAns ? 'ans' : 'noAns';
+    hourBuckets[h][bucket]++;
+    dayBuckets[wd][bucket]++;
+    heatBuckets[wd][h][bucket]++;
+  }
+
+  const totalCalls = totalAns + totalNoAns;
+  $('a-today-calls').textContent = todayCalls.toLocaleString('fr-FR');
+  $('a-week-calls').textContent  = weekCalls.toLocaleString('fr-FR');
+  $('a-answered').textContent    = totalAns.toLocaleString('fr-FR');
+  $('a-no-answer').textContent   = totalNoAns.toLocaleString('fr-FR');
+  const ansRate = totalCalls ? Math.round(100 * totalAns / totalCalls) : 0;
+  $('a-answered-rate').textContent  = totalCalls ? `${ansRate}% des appels` : '—';
+  $('a-no-answer-rate').textContent = totalCalls ? `${100 - ansRate}% des appels` : '—';
+
+  // Meilleure heure (taux > 0 et plus haut)
+  let bestH = -1, bestRate = -1;
+  for (let h = 0; h < 24; h++) {
+    const { ans, noAns } = hourBuckets[h];
+    const t = ans + noAns;
+    if (t < 3) continue; // ignorer les heures avec trop peu de data
+    const rate = ans / t;
+    if (rate > bestRate) { bestRate = rate; bestH = h; }
+  }
+  if (bestH >= 0) {
+    $('a-best-hour').textContent = `${bestH}h–${bestH + 1}h`;
+    $('a-best-hour-rate').textContent = `${Math.round(bestRate * 100)}% de taux de réponse`;
+  } else {
+    $('a-best-hour').textContent = '—';
+    $('a-best-hour-rate').textContent = 'Pas assez de données';
+  }
+
+  renderHeatmap(heatBuckets);
+  renderHourBars(hourBuckets);
+  renderDayBars(dayBuckets);
+
+  $('analytics-loader').style.display = 'none';
+  $('analytics-content').style.display = 'block';
+  analyticsLoaded = true;
+}
+
+function rateColor(rate) {
+  // 0 → gris, 1 → vert vif
+  if (rate == null) return 'var(--panel-3)';
+  const r = Math.max(0, Math.min(1, rate));
+  // interp from #232a38 to #3fb950
+  const a = [0x23, 0x2a, 0x38];
+  const b = [0x3f, 0xb9, 0x50];
+  const c = a.map((v, i) => Math.round(v + (b[i] - v) * r));
+  return `rgb(${c[0]},${c[1]},${c[2]})`;
+}
+
+function renderHeatmap(heat) {
+  const grid = $('heatmap');
+  let html = '<div class="hm-corner"></div>';
+  for (let h = 0; h < 24; h++) {
+    html += `<div class="hm-hour-label">${(h % 3 === 0) ? h + 'h' : ''}</div>`;
+  }
+  for (let d = 0; d < 7; d++) {
+    html += `<div class="hm-day-label">${DAY_LABELS[d]}</div>`;
+    for (let h = 0; h < 24; h++) {
+      const { ans, noAns } = heat[d][h];
+      const t = ans + noAns;
+      const rate = t ? ans / t : null;
+      const color = t ? rateColor(rate) : 'var(--panel-3)';
+      const tip = t
+        ? `${DAY_LABELS[d]} ${h}h : ${ans}/${t} répondus (${Math.round(rate * 100)}%)`
+        : `${DAY_LABELS[d]} ${h}h : aucun appel`;
+      html += `<div class="hm-cell" style="background:${color};opacity:${t ? 1 : .55}" data-tip="${esc(tip)}"></div>`;
+    }
+  }
+  grid.innerHTML = html;
+}
+
+function renderHourBars(hourBuckets) {
+  const max = Math.max(1, ...hourBuckets.map(b => b.ans + b.noAns));
+  const html = hourBuckets.map((b, h) => {
+    const t = b.ans + b.noAns;
+    const rate = t ? Math.round(100 * b.ans / t) : 0;
+    const heightPct = (t / max) * 100;
+    return `<div class="bar-col" title="${h}h : ${b.ans}/${t} répondus${t ? ` (${rate}%)` : ''}">
+      <div class="bar" style="height:${heightPct}%;background:linear-gradient(to top, var(--primary-d) 0%, ${rateColor(t ? b.ans / t : 0)} 100%);">
+        ${t ? `<span class="bar-val">${rate}%</span>` : ''}
+      </div>
+      <div class="bar-label">${h}</div>
+    </div>`;
+  }).join('');
+  $('bars-hour').innerHTML = html;
+}
+
+function renderDayBars(dayBuckets) {
+  const max = Math.max(1, ...dayBuckets.map(b => b.ans + b.noAns));
+  const html = dayBuckets.map((b, i) => {
+    const t = b.ans + b.noAns;
+    const rate = t ? Math.round(100 * b.ans / t) : 0;
+    const heightPct = (t / max) * 100;
+    return `<div class="bar-col" title="${DAY_LABELS[i]} : ${b.ans}/${t} répondus${t ? ` (${rate}%)` : ''}">
+      <div class="bar" style="height:${heightPct}%;background:linear-gradient(to top, var(--primary-d) 0%, ${rateColor(t ? b.ans / t : 0)} 100%);">
+        ${t ? `<span class="bar-val">${rate}%</span>` : ''}
+      </div>
+      <div class="bar-label">${DAY_LABELS[i]}</div>
+    </div>`;
+  }).join('');
+  $('bars-day').innerHTML = html;
+}
+
+// ═══════════════════════════════════════════════════════════
+// REALTIME
+// ═══════════════════════════════════════════════════════════
+let countsDebounceTimer = null;
+function debouncedLoadCounts() {
+  clearTimeout(countsDebounceTimer);
+  countsDebounceTimer = setTimeout(loadCounts, 2000);
+}
+
+function initRealtime() {
+  const dot = $('realtime-dot');
+  db.channel('landscapers-crm-calls')
+    // UPDATE seulement : on ignore INSERT/DELETE (scraper) qui n'affectent pas l'écran courant
+    .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'landscapers' }, () => {
+      // Debounce 2s : si plusieurs updates arrivent (saves successifs, autres commerciaux),
+      // on ne déclenche qu'une seule rafale de count queries
+      debouncedLoadCounts();
+      analyticsLoaded = false;
+    })
+    .subscribe(s => dot.classList.toggle('connected', s === 'SUBSCRIBED'));
+}
+
+// ═══════════════════════════════════════════════════════════
+// START
+// ═══════════════════════════════════════════════════════════
 async function startCRM() {
   try {
-    await Promise.allSettled([loadStats(), loadFilterOptions()]);
-    await loadPage();
+    await Promise.allSettled([loadCounts(), loadPage()]);
     initRealtime();
-  } catch(err) {
+  } catch (err) {
     showLoader(false);
-    showError('Erreur Supabase : ' + (err.message||err));
+    showError('Erreur Supabase : ' + (err.message || err));
   }
 }
 
-// ── BOOT ──
 (async function init() {
   if (!SUPABASE_ANON_KEY || SUPABASE_ANON_KEY === 'VOTRE_CLE_ANON_ICI') {
-    document.getElementById('login-overlay').classList.add('hidden');
-    document.getElementById('crm-app').style.display = 'block';
+    $('login-overlay').classList.add('hidden');
+    $('crm-app').style.display = 'block';
     showLoader(false);
     showError('Configurez SUPABASE_ANON_KEY dans crm/index.html');
     return;
