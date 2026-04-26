@@ -4,9 +4,10 @@
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>CRM Appels — Geo-Leaad</title>
-<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.104.1/dist/umd/supabase.min.js"></script>
 <style>
   :root {
+    color-scheme: dark;
     --bg:        #0d1117;
     --panel:     #161b22;
     --panel-2:   #1c2230;
@@ -110,13 +111,18 @@
 
   /* ── FILTRES ── */
   #filters {
-    background: var(--panel);
+    background: rgba(22, 27, 34, .88);
+    backdrop-filter: blur(10px);
+    -webkit-backdrop-filter: blur(10px);
     border-bottom: 1px solid var(--border);
     padding: 12px 24px;
     display: flex;
     gap: 10px;
     flex-wrap: wrap;
     align-items: center;
+    position: sticky;
+    top: 48px;
+    z-index: 90;
   }
   #search {
     flex: 1;
@@ -245,6 +251,10 @@
   .badge.b-answered     { background: rgba(63, 185, 80, .12);   color: var(--success); }
   .badge.b-no-answer    { background: rgba(248, 81, 73, .12);   color: var(--danger); }
   .badge.b-callback     { background: rgba(210, 153, 34, .14);  color: var(--warning); }
+  .badge.b-callback-today { background: rgba(210, 153, 34, .25); color: var(--warning); border-color: rgba(210, 153, 34, .5); }
+  .badge.b-overdue      { background: rgba(248, 81, 73, .18);   color: var(--danger);  border-color: rgba(248, 81, 73, .45); }
+  .badge.b-overdue::before { animation: pulse 1.6s ease-in-out infinite; }
+  @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: .3; } }
   .badge.b-interested   { background: rgba(63, 185, 80, .18);   color: #56d364; border-color: rgba(63, 185, 80, .3); }
   .badge.b-not          { background: rgba(248, 81, 73, .15);   color: var(--danger); border-color: rgba(248, 81, 73, .25); }
 
@@ -832,6 +842,49 @@
     font-size: .9rem;
   }
 
+  /* ── CONFIRM DIALOG ── */
+  #confirm-overlay {
+    position: fixed; inset: 0;
+    background: rgba(0, 0, 0, .65);
+    z-index: 400;
+    display: none;
+    align-items: center;
+    justify-content: center;
+    padding: 24px;
+  }
+  #confirm-overlay.show { display: flex; }
+  .confirm-card {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 22px 24px;
+    max-width: 380px;
+    width: 100%;
+    box-shadow: 0 20px 60px rgba(0, 0, 0, .55);
+  }
+  .confirm-text {
+    font-size: .95rem;
+    margin-bottom: 18px;
+    text-align: center;
+    line-height: 1.45;
+  }
+  .confirm-actions {
+    display: flex;
+    gap: 10px;
+    justify-content: flex-end;
+  }
+  .btn-danger {
+    background: var(--danger);
+    color: #fff;
+    border: none;
+    border-radius: 8px;
+    padding: 10px 18px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: background .15s;
+  }
+  .btn-danger:hover { background: var(--danger-d); }
+
   /* ── SCROLLBAR ── */
   ::-webkit-scrollbar { width: 10px; height: 10px; }
   ::-webkit-scrollbar-track { background: var(--bg); }
@@ -967,7 +1020,7 @@
 <!-- VIEW : LEADS -->
 <div id="view-leads" class="view active">
   <div id="filters">
-    <input type="search" id="search" placeholder="Rechercher par nom ou ville…" autocomplete="off" />
+    <input type="search" id="search" placeholder="Rechercher par nom ou ville…" autocomplete="off" aria-label="Rechercher par nom d'entreprise ou ville" />
     <div class="quick-filters">
       <button class="qf-chip active" data-qf="tous">Tous <span class="qf-count" id="c-tous">—</span></button>
       <button class="qf-chip" data-qf="a_appeler">À appeler <span class="qf-count" id="c-a_appeler">—</span></button>
@@ -1114,6 +1167,7 @@
           <span id="lm-gerant"></span>
           <span id="lm-ville"></span>
           <span id="lm-phone"></span>
+          <span id="lm-email"></span>
           <span id="lm-web"></span>
         </div>
       </div>
@@ -1155,6 +1209,17 @@
   </div>
 </div>
 
+<!-- CONFIRM DIALOG -->
+<div id="confirm-overlay">
+  <div class="confirm-card">
+    <div class="confirm-text" id="confirm-text">—</div>
+    <div class="confirm-actions">
+      <button class="btn-ghost" id="confirm-cancel" type="button">Annuler</button>
+      <button class="btn-danger" id="confirm-yes"   type="button">Oui</button>
+    </div>
+  </div>
+</div>
+
 <!-- TOAST -->
 <div id="toast"></div>
 
@@ -1186,7 +1251,7 @@ const STATUT_INTERESSE     = ['en_discussion', 'solution_envoyee', 'relance_essa
 const STATUT_PAS_INTERESSE = ['pas_interesse', 'perdu', 'sans_suite', 'hors_cible', 'a_ferme'];
 
 const TODAY_STR = new Date().toISOString().slice(0, 10);
-const SELECT_COLS = 'place_id,name,phone,address,website,maps_url,statut,notes,rappel_le,assigne_a,prenom_gerant,nom_gerant,appels_horodates,nb_tentatives,premier_repondu_at,dernier_contact_at';
+const SELECT_COLS = 'place_id,name,phone,email,address,website,maps_url,statut,notes,rappel_le,assigne_a,prenom_gerant,nom_gerant,appels_horodates,nb_tentatives,premier_repondu_at,dernier_contact_at';
 
 const { createClient } = supabase;
 const db = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
@@ -1217,6 +1282,22 @@ function esc(s) { return s == null ? '' : String(s).replace(/&/g,'&amp;').replac
 function showError(msg) { const e = $('error-msg'); e.textContent = msg; e.classList.add('visible'); }
 function hideError()    { $('error-msg').classList.remove('visible'); }
 function showLoader(v)  { $('loader').classList.toggle('visible', v); }
+
+// Mini-dialog de confirmation réutilisable. Resolves true/false.
+function askConfirm(message) {
+  return new Promise(resolve => {
+    $('confirm-text').textContent = message;
+    $('confirm-overlay').classList.add('show');
+    const cleanup = (val) => {
+      $('confirm-overlay').classList.remove('show');
+      $('confirm-yes').onclick    = null;
+      $('confirm-cancel').onclick = null;
+      resolve(val);
+    };
+    $('confirm-yes').onclick    = () => cleanup(true);
+    $('confirm-cancel').onclick = () => cleanup(false);
+  });
+}
 
 let toastTimer = null;
 function toast(msg, type = '') {
@@ -1260,7 +1341,7 @@ function relTime(iso) {
 function fmtDateTime(iso) {
   if (!iso) return '';
   const d = new Date(iso);
-  return d.toLocaleDateString('fr-FR', { day: '2-digit', month: '2-digit', year: '2-digit' })
+  return d.toLocaleDateString('fr-FR', { day: '2-digit', month: '2-digit', year: 'numeric' })
        + ' ' + d.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' });
 }
 
@@ -1268,7 +1349,15 @@ function fmtDateTime(iso) {
 function deriveStatus(r) {
   if (r.statut && STATUT_PAS_INTERESSE.includes(r.statut)) return { key: 'b-not',        label: 'Pas intéressé' };
   if (r.statut && STATUT_INTERESSE.includes(r.statut))     return { key: 'b-interested', label: 'Intéressé'     };
-  if (r.rappel_le)                                          return { key: 'b-callback',   label: 'Rappel ' + r.rappel_le };
+  if (r.rappel_le) {
+    // Comparaison de chaînes ISO YYYY-MM-DD : sûr, lexico = chrono
+    const today = new Date().toISOString().slice(0, 10);
+    const [y, m, d] = r.rappel_le.split('-');
+    const short = `${d}/${m}`;
+    if (r.rappel_le <  today) return { key: 'b-overdue',        label: `Rappel en retard · ${short}` };
+    if (r.rappel_le === today) return { key: 'b-callback-today', label: "Rappel aujourd'hui" };
+    return { key: 'b-callback', label: `Rappel ${short}` };
+  }
   if (r.premier_repondu_at)                                 return { key: 'b-answered',   label: 'Répondu'       };
   if ((r.nb_tentatives || 0) > 0)                           return { key: 'b-no-answer',  label: `Sans réponse · ${r.nb_tentatives}×` };
   return { key: 'b-call', label: 'À appeler' };
@@ -1370,7 +1459,13 @@ function buildQuery() {
   let q = db.from('landscapers').select(SELECT_COLS, { count: 'exact' });
   if (searchTerm) {
     const s = searchTerm.trim().replace(/[%,()]/g, '');
-    if (s) q = q.or(`name.ilike.%${s}%,address.ilike.%${s}%`);
+    if (s) {
+      // - name : recherche libre dans le nom d'entreprise
+      // - ville : pattern "5 chiffres + espace(s) + ... + recherche" dans address
+      //   évite les faux positifs type "rue de Paris" quand on cherche "Paris"
+      const re = s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      q = q.or(`name.ilike.%${s}%,address.imatch.[0-9]{5}\\s+\\S*${re}`);
+    }
   }
   q = applyQuickFilter(q);
   return q;
@@ -1378,27 +1473,50 @@ function buildQuery() {
 
 function chooseSort(qf) {
   // tri intelligent selon le filtre
-  if (qf === 'rappel')        return { col: 'rappel_le',          asc: true  };
-  if (qf === 'a_appeler')     return { col: 'name',               asc: true  };
-  if (qf === 'sans_reponse')  return { col: 'dernier_contact_at', asc: false };
-  return { col: 'dernier_contact_at', asc: false };
+  if (qf === 'rappel')        return { col: 'rappel_le',          asc: true,  nullsFirst: false };
+  if (qf === 'a_appeler')     return { col: 'name',               asc: true,  nullsFirst: false };
+  if (qf === 'sans_reponse')  return { col: 'dernier_contact_at', asc: false, nullsFirst: false };
+  if (qf === 'repondu')       return { col: 'premier_repondu_at', asc: false, nullsFirst: false };
+  // "Tous" et autres : leads jamais contactés en HAUT (workflow prospection)
+  return { col: 'dernier_contact_at', asc: false, nullsFirst: true };
 }
 
 // ═══════════════════════════════════════════════════════════
 // LOAD PAGE
 // ═══════════════════════════════════════════════════════════
+let activeLoadAbort = null;
 async function loadPage() {
+  // Annule la requête précédente : si l'utilisateur tape vite ou clique entre filtres,
+  // on ne veut pas qu'une réponse périmée écrase un résultat plus récent
+  if (activeLoadAbort) activeLoadAbort.abort();
+  const ctrl = new AbortController();
+  activeLoadAbort = ctrl;
+
   showLoader(true); hideError();
   const from = currentPage * pageSize;
   const sort = chooseSort(activeQF);
 
-  let q = buildQuery().order(sort.col, { ascending: sort.asc, nullsFirst: false });
+  let q = buildQuery().order(sort.col, { ascending: sort.asc, nullsFirst: sort.nullsFirst });
   // tri secondaire stable
   if (sort.col !== 'name') q = q.order('name', { ascending: true });
 
-  const { data, error, count } = await q.range(from, from + pageSize - 1);
+  let data, error, count;
+  try {
+    ({ data, error, count } = await q.abortSignal(ctrl.signal).range(from, from + pageSize - 1));
+  } catch (e) {
+    if (ctrl.signal.aborted) return; // une nouvelle requête a pris le relais
+    showLoader(false);
+    showError('Erreur réseau : ' + (e.message || e));
+    return;
+  }
+  if (ctrl.signal.aborted) return;
+
   showLoader(false);
-  if (error) { showError('Erreur Supabase : ' + error.message); return; }
+  if (error) {
+    // Certaines impl renvoient l'abort sous forme d'erreur — on l'ignore aussi
+    if (/abort/i.test(error.message || '')) return;
+    showError('Erreur Supabase : ' + error.message); return;
+  }
   totalCount = count ?? 0;
   currentRows = data || [];
   renderTable(currentRows);
@@ -1610,6 +1728,12 @@ $('sp-save').addEventListener('click', async () => {
   const row = currentRows.find(r => r.place_id === leadId);
   if (!row) return;
 
+  // Confirmation pour l'action irréversible "Pas intéressé"
+  if (spState.action === 'non') {
+    const ok = await askConfirm(`Confirmer : marquer "${row.name || 'ce lead'}" comme Pas intéressé ?`);
+    if (!ok) return;
+  }
+
   const btn = $('sp-save');
   btn.disabled = true; btn.textContent = 'Enregistrement…';
 
@@ -1682,14 +1806,23 @@ function openLeadModal(id) {
   $('lm-gerant').innerHTML = ger   ? `👤 ${esc(ger)}`   : '';
   $('lm-ville').innerHTML  = ville ? `📍 ${esc(ville)}` : '';
   $('lm-phone').innerHTML  = row.phone   ? `📞 <a href="tel:${esc(row.phone)}">${esc(row.phone)}</a>` : '';
+  $('lm-email').innerHTML  = row.email   ? `✉️ <a href="mailto:${esc(row.email)}">${esc(row.email)}</a>` : '';
   $('lm-web').innerHTML    = row.website ? `🌐 <a href="${esc(row.website)}" target="_blank" rel="noopener">site</a>` : '';
 
   const callBtn = $('lm-call-now');
   if (row.phone) {
     callBtn.href = 'tel:' + row.phone;
     callBtn.style.display = 'inline-flex';
+    callBtn.onclick = () => {
+      // tel: s'exécute via le href (default behavior). On ferme la modal et on ouvre
+      // le panel Répondu pour pouvoir noter l'appel sans manip supplémentaire.
+      const id = modalLeadId;
+      closeLeadModal();
+      if (id) setTimeout(() => openSidePanel(id), 250);
+    };
   } else {
     callBtn.style.display = 'none';
+    callBtn.onclick = null;
   }
 
   // Timeline
@@ -1699,10 +1832,13 @@ function openLeadModal(id) {
   if (calls.length === 0) {
     tl.innerHTML = `<li class="tl-empty">Aucun appel enregistré pour l'instant.</li>`;
   } else {
+    const VALID_INT = ['chaud', 'tiede', 'froid'];
     tl.innerHTML = calls.map(c => {
       const isYes = c.type === 'répondu';
-      const intCls = c.interet ? ` ${c.interet}` : '';
-      const intTxt = c.interet ? c.interet.toUpperCase() + (c.duree_min ? ` · ${c.duree_min} min` : '') : '';
+      // Whitelist : on ne propage le mot d'intérêt en classe CSS que s'il est connu
+      const intSafe = VALID_INT.includes(c.interet) ? c.interet : '';
+      const intCls  = intSafe ? ` ${intSafe}` : '';
+      const intTxt  = intSafe ? intSafe.toUpperCase() + (c.duree_min ? ` · ${c.duree_min} min` : '') : '';
       return `<li>
         <div class="tl-head">
           <span class="tl-type ${isYes ? 'repondu' : 'sans_reponse'}">${isYes ? 'Répondu' : 'Sans réponse'}</span>
@@ -1934,6 +2070,15 @@ function debouncedLoadCounts() {
   countsDebounceTimer = setTimeout(loadCounts, 2000);
 }
 
+let analyticsDebounceTimer = null;
+function debouncedReloadAnalytics() {
+  clearTimeout(analyticsDebounceTimer);
+  analyticsDebounceTimer = setTimeout(() => {
+    analyticsLoaded = false;
+    if ($('view-analytics').classList.contains('active')) loadAnalytics();
+  }, 2000);
+}
+
 function initRealtime() {
   const dot = $('realtime-dot');
   db.channel('landscapers-crm-calls')
@@ -1942,7 +2087,8 @@ function initRealtime() {
       // Debounce 2s : si plusieurs updates arrivent (saves successifs, autres commerciaux),
       // on ne déclenche qu'une seule rafale de count queries
       debouncedLoadCounts();
-      analyticsLoaded = false;
+      // Si l'onglet Analytics est ouvert, recharge réellement (sinon juste invalide le flag)
+      debouncedReloadAnalytics();
     })
     .subscribe(s => dot.classList.toggle('connected', s === 'SUBSCRIBED'));
 }
