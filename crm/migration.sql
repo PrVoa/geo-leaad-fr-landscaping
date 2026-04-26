@@ -136,3 +136,101 @@ ALTER TABLE landscapers
 CREATE INDEX IF NOT EXISTS idx_landscapers_premier_repondu_at ON landscapers(premier_repondu_at);
 CREATE INDEX IF NOT EXISTS idx_landscapers_dernier_contact_at ON landscapers(dernier_contact_at DESC);
 CREATE INDEX IF NOT EXISTS idx_landscapers_nb_tentatives      ON landscapers(nb_tentatives);
+
+-- ============================================================
+-- RPC : counts agrégés des chips du CRM (1 query au lieu de 7)
+-- Sémantique alignée sur applyQuickFilter() côté JS
+-- ============================================================
+
+CREATE OR REPLACE FUNCTION get_crm_counts()
+RETURNS json
+LANGUAGE sql
+SECURITY DEFINER
+STABLE
+AS $$
+  SELECT json_build_object(
+    'tous',          COUNT(*),
+    'a_appeler',     COUNT(*) FILTER (WHERE nb_tentatives = 0 AND (statut IS NULL OR statut = 'nouveau')),
+    'repondu',       COUNT(*) FILTER (WHERE premier_repondu_at IS NOT NULL),
+    'sans_reponse',  COUNT(*) FILTER (WHERE nb_tentatives > 0 AND premier_repondu_at IS NULL),
+    'rappel',        COUNT(*) FILTER (WHERE rappel_le IS NOT NULL),
+    'interesse',     COUNT(*) FILTER (WHERE statut IN ('en_discussion','solution_envoyee','relance_essai','accompagne','gagne')),
+    'pas_interesse', COUNT(*) FILTER (WHERE statut IN ('pas_interesse','perdu','sans_suite','hors_cible','a_ferme'))
+  )
+  FROM landscapers;
+$$;
+
+GRANT EXECUTE ON FUNCTION get_crm_counts() TO authenticated;
+
+-- ============================================================
+-- RPC : analytics agrégés (heatmap + bars par heure & jour)
+-- Évite de télécharger toutes les rangées appels_horodates côté client
+-- Timezone Europe/Paris pour aligner avec la perception utilisateur (FR)
+-- ============================================================
+
+CREATE OR REPLACE FUNCTION get_call_analytics()
+RETURNS json
+LANGUAGE sql
+SECURITY DEFINER
+STABLE
+AS $$
+  WITH expanded AS (
+    SELECT
+      (call_elem->>'ts')::timestamptz AS ts,
+      call_elem->>'type' AS call_type
+    FROM landscapers,
+         LATERAL jsonb_array_elements(COALESCE(appels_horodates, '[]'::jsonb)) AS call_elem
+    WHERE jsonb_typeof(appels_horodates) = 'array'
+      AND nb_tentatives > 0
+  ),
+  enriched AS (
+    SELECT
+      ts,
+      call_type = 'répondu' AS is_ans,
+      EXTRACT(HOUR FROM ts AT TIME ZONE 'Europe/Paris')::int AS h,
+      ((EXTRACT(DOW FROM ts AT TIME ZONE 'Europe/Paris')::int + 6) % 7) AS wd
+    FROM expanded
+    WHERE ts IS NOT NULL
+  )
+  SELECT json_build_object(
+    'today_calls', (
+      SELECT COUNT(*) FROM enriched
+      WHERE ts >= (date_trunc('day', NOW() AT TIME ZONE 'Europe/Paris') AT TIME ZONE 'Europe/Paris')
+    ),
+    'week_calls', (
+      SELECT COUNT(*) FROM enriched
+      WHERE ts >= (date_trunc('week', NOW() AT TIME ZONE 'Europe/Paris') AT TIME ZONE 'Europe/Paris')
+    ),
+    'total_ans',    (SELECT COUNT(*) FROM enriched WHERE is_ans),
+    'total_no_ans', (SELECT COUNT(*) FROM enriched WHERE NOT is_ans),
+    'by_hour', COALESCE((
+      SELECT json_agg(json_build_object('h', h, 'ans', ans, 'no_ans', no_ans) ORDER BY h)
+      FROM (
+        SELECT h,
+               COUNT(*) FILTER (WHERE is_ans)     AS ans,
+               COUNT(*) FILTER (WHERE NOT is_ans) AS no_ans
+        FROM enriched GROUP BY h
+      ) x
+    ), '[]'::json),
+    'by_day', COALESCE((
+      SELECT json_agg(json_build_object('wd', wd, 'ans', ans, 'no_ans', no_ans) ORDER BY wd)
+      FROM (
+        SELECT wd,
+               COUNT(*) FILTER (WHERE is_ans)     AS ans,
+               COUNT(*) FILTER (WHERE NOT is_ans) AS no_ans
+        FROM enriched GROUP BY wd
+      ) x
+    ), '[]'::json),
+    'heatmap', COALESCE((
+      SELECT json_agg(json_build_object('wd', wd, 'h', h, 'ans', ans, 'no_ans', no_ans))
+      FROM (
+        SELECT wd, h,
+               COUNT(*) FILTER (WHERE is_ans)     AS ans,
+               COUNT(*) FILTER (WHERE NOT is_ans) AS no_ans
+        FROM enriched GROUP BY wd, h
+      ) x
+    ), '[]'::json)
+  );
+$$;
+
+GRANT EXECUTE ON FUNCTION get_call_analytics() TO authenticated;
