@@ -149,13 +149,17 @@ SECURITY DEFINER
 STABLE
 AS $$
   SELECT json_build_object(
-    'tous',          COUNT(*),
+    -- "Tous" exclut désormais les hors_cible/exclu (ils ont leur propre chip)
+    'tous',          COUNT(*) FILTER (WHERE statut IS NULL OR statut NOT IN ('hors_cible','exclu')),
     'a_appeler',     COUNT(*) FILTER (WHERE nb_tentatives = 0 AND (statut IS NULL OR statut = 'nouveau')),
     'repondu',       COUNT(*) FILTER (WHERE premier_repondu_at IS NOT NULL),
     'sans_reponse',  COUNT(*) FILTER (WHERE nb_tentatives > 0 AND premier_repondu_at IS NULL),
     'rappel',        COUNT(*) FILTER (WHERE rappel_le IS NOT NULL),
     'interesse',     COUNT(*) FILTER (WHERE statut IN ('en_discussion','solution_envoyee','relance_essai','accompagne','gagne')),
-    'pas_interesse', COUNT(*) FILTER (WHERE statut IN ('pas_interesse','perdu','sans_suite','hors_cible','a_ferme'))
+    -- Plus de hors_cible ici : ils sont dans leur chip dédiée
+    'pas_interesse', COUNT(*) FILTER (WHERE statut IN ('pas_interesse','perdu','sans_suite','a_ferme')),
+    'hors_cible',    COUNT(*) FILTER (WHERE statut IN ('hors_cible','exclu')),
+    'avec_contact',  COUNT(*) FILTER (WHERE nom_gerant IS NOT NULL AND nom_gerant <> '' AND phone IS NOT NULL AND phone <> '')
   )
   FROM landscapers;
 $$;

@@ -192,6 +192,10 @@
   .qf-chip[data-qf="interesse"].active .qf-count   { color: var(--success); }
   .qf-chip[data-qf="pas_interesse"].active { border-color: var(--danger); }
   .qf-chip[data-qf="pas_interesse"].active .qf-count { color: var(--danger); }
+  .qf-chip[data-qf="hors_cible"].active   { border-color: var(--muted-2); }
+  .qf-chip[data-qf="hors_cible"].active .qf-count   { color: var(--muted); }
+  .qf-chip[data-qf="avec_contact"].active { border-color: var(--success); }
+  .qf-chip[data-qf="avec_contact"].active .qf-count { color: var(--success); }
 
   /* ── TABLE ── */
   #wrap {
@@ -237,11 +241,18 @@
   .col-actions { width: 240px; text-align: right; white-space: nowrap; }
 
   .sub-line {
-    font-size: .75rem;
+    font-size: .8rem;
     color: var(--muted-2);
-    margin-top: 2px;
+    margin-top: 3px;
     font-weight: normal;
   }
+  .phone-link {
+    color: var(--primary);
+    font-weight: 500;
+    text-decoration: none;
+  }
+  .phone-link:hover { text-decoration: underline; }
+  .phone-empty { color: var(--muted-2); }
 
   /* ── BADGES STATUT (dérivés) ── */
   .badge {
@@ -305,6 +316,8 @@
   .ra-btn.ra-no:hover { background: rgba(248, 81, 73, .2); border-color: var(--danger); }
   .ra-btn.ra-card { color: var(--muted); }
   .ra-btn.ra-card:hover { color: var(--text); background: var(--panel-3); }
+  /* Bouton "Appeler" — caché desktop (le lien tel: dans sub-line suffit), gros sur mobile */
+  .ra-btn.ra-call { display: none; }
 
   /* ── PAGINATION ── */
   #pagination {
@@ -1088,6 +1101,24 @@
       margin-top: 2px;
     }
     .ra-btn.ra-card::after { content: '  Voir la fiche'; }
+    /* Gros bouton 📞 mobile — full-width, vert, prominent */
+    .ra-btn.ra-call {
+      display: flex;
+      grid-column: 1 / -1;
+      background: rgba(63, 185, 80, .15);
+      border: 1px solid rgba(63, 185, 80, .4);
+      color: var(--success);
+      min-height: 60px;
+      font-size: 1.05rem;
+      font-weight: 700;
+      text-decoration: none;
+      letter-spacing: .01em;
+      margin-bottom: 4px;
+    }
+    .ra-btn.ra-call:hover { background: rgba(63, 185, 80, .22); text-decoration: none; }
+    .ra-btn.ra-call:active { background: rgba(63, 185, 80, .3); }
+    /* Sub-line phone : on la rend bien visible sur mobile aussi */
+    td.col-name .sub-line .phone-link { font-size: .9rem; }
 
     /* Pagination plus aérée */
     #pagination { padding: 16px 14px 24px; gap: 8px; }
@@ -1148,6 +1179,8 @@
       <button class="qf-chip" data-qf="rappel">Rappel <span class="qf-count" id="c-rappel">—</span></button>
       <button class="qf-chip" data-qf="interesse">Intéressé <span class="qf-count" id="c-interesse">—</span></button>
       <button class="qf-chip" data-qf="pas_interesse">Pas intéressé <span class="qf-count" id="c-pas_interesse">—</span></button>
+      <button class="qf-chip" data-qf="hors_cible">Hors cible <span class="qf-count" id="c-hors_cible">—</span></button>
+      <button class="qf-chip" data-qf="avec_contact">📞 Avec contact <span class="qf-count" id="c-avec_contact">—</span></button>
     </div>
   </div>
 
@@ -1391,7 +1424,9 @@ const STATUT_OPTIONS = [
   ['a_ferme',          'A fermé'],
 ];
 const STATUT_INTERESSE     = ['en_discussion', 'solution_envoyee', 'relance_essai', 'accompagne', 'gagne'];
-const STATUT_PAS_INTERESSE = ['pas_interesse', 'perdu', 'sans_suite', 'hors_cible', 'a_ferme'];
+// hors_cible/exclu ont leur propre chip — ils ne sont plus dans "Pas intéressé"
+const STATUT_PAS_INTERESSE = ['pas_interesse', 'perdu', 'sans_suite', 'a_ferme'];
+const STATUT_HORS_CIBLE    = ['hors_cible', 'exclu'];
 
 const SELECT_COLS ='place_id,name,phone,email,address,website,maps_url,statut,notes,rappel_le,assigne_a,prenom_gerant,nom_gerant,appels_horodates,nb_tentatives,premier_repondu_at,dernier_contact_at';
 
@@ -1589,6 +1624,12 @@ document.querySelectorAll('.tab-btn').forEach(b => {
 // ═══════════════════════════════════════════════════════════
 function applyQuickFilter(q) {
   switch (activeQF) {
+    case 'tous':
+      // Masque hors_cible/exclu par défaut (ils ont leur chip dédiée)
+      // Deux .or() chaînés = AND'd côté PostgREST → préserve les NULL
+      q = q.or('statut.is.null,statut.neq.hors_cible')
+           .or('statut.is.null,statut.neq.exclu');
+      break;
     case 'a_appeler':
       // pas encore de tentative ET (statut NULL OU 'nouveau')
       // .or() corrige le bug NULL de SQL "NOT IN" qui exclut silencieusement les NULL
@@ -1608,6 +1649,14 @@ function applyQuickFilter(q) {
       break;
     case 'pas_interesse':
       q = q.in('statut', STATUT_PAS_INTERESSE);
+      break;
+    case 'hors_cible':
+      q = q.in('statut', STATUT_HORS_CIBLE);
+      break;
+    case 'avec_contact':
+      // Lead "qualifié" : a un gérant ET un téléphone
+      q = q.not('nom_gerant', 'is', null).neq('nom_gerant', '')
+           .not('phone',      'is', null).neq('phone',      '');
       break;
   }
   return q;
@@ -1635,6 +1684,8 @@ function chooseSort(qf) {
   if (qf === 'a_appeler')     return { col: 'name',               asc: true,  nullsFirst: false };
   if (qf === 'sans_reponse')  return { col: 'dernier_contact_at', asc: false, nullsFirst: false };
   if (qf === 'repondu')       return { col: 'premier_repondu_at', asc: false, nullsFirst: false };
+  if (qf === 'hors_cible')    return { col: 'name',               asc: true,  nullsFirst: false };
+  if (qf === 'avec_contact')  return { col: 'name',               asc: true,  nullsFirst: false };
   // "Tous" et autres : leads jamais contactés en HAUT (workflow prospection)
   return { col: 'dernier_contact_at', asc: false, nullsFirst: true };
 }
@@ -1706,10 +1757,16 @@ function renderTable(rows) {
     const st = deriveStatus(r);
     const ger = gerantName(r);
     const ville = extractVille(r.address);
+    const phoneLine = r.phone
+      ? `<a class="phone-link" href="tel:${esc(r.phone)}" onclick="event.stopPropagation()">${esc(r.phone)}</a>`
+      : `<span class="phone-empty">—</span>`;
+    const callBtn = r.phone
+      ? `<a class="ra-btn ra-call" href="tel:${esc(r.phone)}" onclick="event.stopPropagation()">📞 Appeler ${esc(r.phone)}</a>`
+      : '';
     return `<tr data-id="${esc(r.place_id)}">
       <td class="col-name">
         <div>${esc(r.name)}</div>
-        ${r.phone ? `<div class="sub-line">${esc(r.phone)}</div>` : ''}
+        <div class="sub-line">${phoneLine}</div>
       </td>
       <td class="col-gerant">${ger ? esc(ger) : '<span style="color:var(--muted-2)">—</span>'}</td>
       <td class="col-ville">${ville ? esc(ville) : '<span style="color:var(--muted-2)">—</span>'}</td>
@@ -1717,6 +1774,7 @@ function renderTable(rows) {
       <td class="col-action">${esc(lastActionText(r))}</td>
       <td class="col-actions">
         <div class="row-actions">
+          ${callBtn}
           <button class="ra-btn ra-yes"  data-act="yes"  data-id="${esc(r.place_id)}">✅ Répondu</button>
           <button class="ra-btn ra-no"   data-act="no"   data-id="${esc(r.place_id)}">❌ Sans réponse</button>
           <button class="ra-btn ra-card" data-act="card" data-id="${esc(r.place_id)}" title="Fiche complète">📋</button>
