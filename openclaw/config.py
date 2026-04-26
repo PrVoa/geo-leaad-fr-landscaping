@@ -22,22 +22,20 @@ BOT_SUPABASE_AUTHOR = "CroustyLobster"
 JOURNAL_FILE         = BASE / "memory/journal.json"
 ALERT_FILE           = BASE / "memory/alert_state.json"
 KB_FILE              = BASE / "memory/knowledge_base.json"
-LONG_TERM_FILE       = BASE / "memory/long_term.json"
 BUSINESS_FILE        = BASE / "memory/business.json"
 COSTS_FILE           = BASE / "memory/costs.json"
-AUTONOMOUS_LOG_FILE  = BASE / "memory/autonomous_log.json"
-AUTONOMOUS_MODE_FILE = BASE / "memory/autonomous_mode.json"
 HISTORY_FILE         = BASE / "memory/conv_history.json"
+CHECKIN_STATE_FILE   = BASE / "memory/checkin_state.json"
 
 # ─── LIMITES & QUOTAS ────────────────────────────────────────────────────────
 EXTRACT_DAILY_LIMIT = 80        # extractions mémoire max par jour
 TOKEN_DAILY_LIMIT   = 100_000   # tokens/jour au-delà desquels on coupe extract
-MAX_ACTIONS_PER_DAY = 3         # actions autonomes max par jour
 HISTORY_LIMIT       = 50        # fenêtre glissante de conv par chat
 
 # ─── CHECK-IN QUOTIDIEN ──────────────────────────────────────────────────────
-CHECKIN_DELAY_AFTER_LAST = 30 * 60   # 30 min après la dernière réponse
-CHECKIN_HARD_DEADLINE    = 2 * 3600  # 2h max après l'envoi du check-in
+# La consolidation se fait à 7h le lendemain (1h avant le brief de 8h).
+# Plus de timer de 30 min : on attend toujours jusqu'à 7h.
+CHECKIN_CONSOLIDATION_HOUR = 7  # heure Paris de la consolidation
 
 # ─── API VAO ─────────────────────────────────────────────────────────────────
 API_VAO_URL = os.getenv("API_VAO_URL", "https://178-104-104-36.sslip.io")
@@ -60,6 +58,15 @@ PIPELINE_VENV_PYTHON = "/opt/geo-leaad-fr-landscaping/.venv/bin/python"
 SCRAPER_SCRIPT       = "/opt/geo-leaad-fr-landscaping/scripts/scheduler.py"
 ENRICH_SCRIPT        = "/opt/geo-leaad-fr-landscaping/scripts/enrich.py"
 CLEAN_SCRIPT         = "/opt/geo-leaad-fr-landscaping/scripts/clean_leads.py"
+
+# Logs capturés quand le bot lance scraper/clean (enrich passe par son unit systemd).
+PIPELINE_LOG_DIR  = "/opt/geo-leaad-fr-landscaping/logs"
+SCRAPER_LOG_FILE  = f"{PIPELINE_LOG_DIR}/scraper.log"
+CLEAN_LOG_FILE    = f"{PIPELINE_LOG_DIR}/clean.log"
+
+# Enrich tourne dans son propre unit systemd (découplé d'openclaw.service).
+# Si tu changes la limite par run, édite aussi enrich.service (--limit N).
+ENRICH_SYSTEMD_UNIT = "enrich.service"
 
 # ─── CRM watcher ─────────────────────────────────────────────────────────────
 CHAT_ID_LAURIE = os.getenv("TELEGRAM_CHAT_ID_2", "")  # destinataire des notifs CRM
