@@ -316,8 +316,6 @@
   .ra-btn.ra-no:hover { background: rgba(248, 81, 73, .2); border-color: var(--danger); }
   .ra-btn.ra-card { color: var(--muted); }
   .ra-btn.ra-card:hover { color: var(--text); background: var(--panel-3); }
-  /* Bouton "Appeler" — caché desktop (le lien tel: dans sub-line suffit), gros sur mobile */
-  .ra-btn.ra-call { display: none; }
 
   /* ── PAGINATION ── */
   #pagination {
@@ -1101,24 +1099,17 @@
       margin-top: 2px;
     }
     .ra-btn.ra-card::after { content: '  Voir la fiche'; }
-    /* Gros bouton 📞 mobile — full-width, vert, prominent */
-    .ra-btn.ra-call {
-      display: flex;
-      grid-column: 1 / -1;
-      background: rgba(63, 185, 80, .15);
-      border: 1px solid rgba(63, 185, 80, .4);
-      color: var(--success);
-      min-height: 60px;
-      font-size: 1.05rem;
-      font-weight: 700;
-      text-decoration: none;
-      letter-spacing: .01em;
-      margin-bottom: 4px;
+    /* Sub-line phone : tap target plus généreux sur mobile pour faciliter le tel: */
+    td.col-name .sub-line {
+      padding: 4px 0;
+      margin-top: 6px;
     }
-    .ra-btn.ra-call:hover { background: rgba(63, 185, 80, .22); text-decoration: none; }
-    .ra-btn.ra-call:active { background: rgba(63, 185, 80, .3); }
-    /* Sub-line phone : on la rend bien visible sur mobile aussi */
-    td.col-name .sub-line .phone-link { font-size: .9rem; }
+    td.col-name .sub-line .phone-link {
+      font-size: 1rem;
+      font-weight: 600;
+      display: inline-block;
+      padding: 2px 0;
+    }
 
     /* Pagination plus aérée */
     #pagination { padding: 16px 14px 24px; gap: 8px; }
@@ -1424,9 +1415,9 @@ const STATUT_OPTIONS = [
   ['a_ferme',          'A fermé'],
 ];
 const STATUT_INTERESSE     = ['en_discussion', 'solution_envoyee', 'relance_essai', 'accompagne', 'gagne'];
-// hors_cible/exclu ont leur propre chip — ils ne sont plus dans "Pas intéressé"
-const STATUT_PAS_INTERESSE = ['pas_interesse', 'perdu', 'sans_suite', 'a_ferme'];
-const STATUT_HORS_CIBLE    = ['hors_cible', 'exclu'];
+// "pas_interesse" est désormais fusionné dans hors_cible (chip "Hors cible") — défense client+serveur
+const STATUT_PAS_INTERESSE = ['perdu', 'sans_suite', 'a_ferme'];
+const STATUT_HORS_CIBLE    = ['hors_cible', 'exclu', 'pas_interesse'];
 
 const SELECT_COLS ='place_id,name,phone,email,address,website,maps_url,statut,notes,rappel_le,assigne_a,prenom_gerant,nom_gerant,appels_horodates,nb_tentatives,premier_repondu_at,dernier_contact_at';
 
@@ -1625,10 +1616,11 @@ document.querySelectorAll('.tab-btn').forEach(b => {
 function applyQuickFilter(q) {
   switch (activeQF) {
     case 'tous':
-      // Masque hors_cible/exclu par défaut (ils ont leur chip dédiée)
-      // Deux .or() chaînés = AND'd côté PostgREST → préserve les NULL
+      // Masque hors_cible/exclu/pas_interesse par défaut (ils ont leur chip dédiée)
+      // Plusieurs .or() chaînés = AND'd côté PostgREST → préserve les NULL
       q = q.or('statut.is.null,statut.neq.hors_cible')
-           .or('statut.is.null,statut.neq.exclu');
+           .or('statut.is.null,statut.neq.exclu')
+           .or('statut.is.null,statut.neq.pas_interesse');
       break;
     case 'a_appeler':
       // pas encore de tentative ET (statut NULL OU 'nouveau')
@@ -1678,6 +1670,18 @@ function buildQuery() {
   return q;
 }
 
+// Applique le tri demandé en plaçant systématiquement les noms non-alpha
+// (emoji, chiffre, symbole) en queue de liste — via la colonne SQL générée name_sort_key
+function applySort(q, sort) {
+  if (sort.col === 'name') {
+    return q.order('name_sort_key', { ascending: true })
+            .order('name',          { ascending: sort.asc });
+  }
+  return q.order(sort.col, { ascending: sort.asc, nullsFirst: sort.nullsFirst })
+          .order('name_sort_key', { ascending: true })
+          .order('name',          { ascending: true });
+}
+
 function chooseSort(qf) {
   // tri intelligent selon le filtre
   if (qf === 'rappel')        return { col: 'rappel_le',          asc: true,  nullsFirst: false };
@@ -1705,9 +1709,7 @@ async function loadPage() {
   const from = currentPage * pageSize;
   const sort = chooseSort(activeQF);
 
-  let q = buildQuery().order(sort.col, { ascending: sort.asc, nullsFirst: sort.nullsFirst });
-  // tri secondaire stable
-  if (sort.col !== 'name') q = q.order('name', { ascending: true });
+  const q = applySort(buildQuery(), sort);
 
   let data, error, count;
   try {
@@ -1760,9 +1762,6 @@ function renderTable(rows) {
     const phoneLine = r.phone
       ? `<a class="phone-link" href="tel:${esc(r.phone)}" onclick="event.stopPropagation()">${esc(r.phone)}</a>`
       : `<span class="phone-empty">—</span>`;
-    const callBtn = r.phone
-      ? `<a class="ra-btn ra-call" href="tel:${esc(r.phone)}" onclick="event.stopPropagation()">📞 Appeler ${esc(r.phone)}</a>`
-      : '';
     return `<tr data-id="${esc(r.place_id)}">
       <td class="col-name">
         <div>${esc(r.name)}</div>
@@ -1774,7 +1773,6 @@ function renderTable(rows) {
       <td class="col-action">${esc(lastActionText(r))}</td>
       <td class="col-actions">
         <div class="row-actions">
-          ${callBtn}
           <button class="ra-btn ra-yes"  data-act="yes"  data-id="${esc(r.place_id)}">✅ Répondu</button>
           <button class="ra-btn ra-no"   data-act="no"   data-id="${esc(r.place_id)}">❌ Sans réponse</button>
           <button class="ra-btn ra-card" data-act="card" data-id="${esc(r.place_id)}" title="Fiche complète">📋</button>
@@ -2063,7 +2061,7 @@ $('sp-save').addEventListener('click', async () => {
 
   // Map "Prochaine action" → statut + rappel_le
   if (spState.action === 'demo')   updates.statut = 'en_discussion';
-  if (spState.action === 'non')    updates.statut = 'pas_interesse';
+  if (spState.action === 'non')    updates.statut = 'hors_cible';
   if (spState.action === 'rappel') {
     const r = $('sp-rappel-date').value;
     if (r) updates.rappel_le = r;
@@ -2429,8 +2427,7 @@ async function exportCSV() {
   let from = 0;
   while (true) {
     const sort = chooseSort(activeQF);
-    let q = buildQuery().order(sort.col, { ascending: sort.asc, nullsFirst: sort.nullsFirst });
-    if (sort.col !== 'name') q = q.order('name', { ascending: true });
+    const q = applySort(buildQuery(), sort);
     const { data, error } = await q.range(from, from + step - 1);
     if (error) {
       btn.disabled = false; btn.textContent = '⬇ CSV';

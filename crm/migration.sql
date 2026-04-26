@@ -138,6 +138,26 @@ CREATE INDEX IF NOT EXISTS idx_landscapers_dernier_contact_at ON landscapers(der
 CREATE INDEX IF NOT EXISTS idx_landscapers_nb_tentatives      ON landscapers(nb_tentatives);
 
 -- ============================================================
+-- Fusion : tous les "pas_interesse" deviennent "hors_cible"
+-- (le bouton "🚫 Pas intéressé" du panel écrit désormais hors_cible)
+-- ============================================================
+
+UPDATE landscapers SET statut = 'hors_cible' WHERE statut = 'pas_interesse';
+
+-- ============================================================
+-- Tri : noms commençant par emoji/chiffre/symbole en queue
+-- Colonne générée + index → ORDER BY name_sort_key, name fait remonter
+-- les vrais noms (lettres) en premier, le reste en fin de liste
+-- ============================================================
+
+ALTER TABLE landscapers
+  ADD COLUMN IF NOT EXISTS name_sort_key SMALLINT
+  GENERATED ALWAYS AS (CASE WHEN name ~ '^[[:alpha:]]' THEN 0 ELSE 1 END) STORED;
+
+CREATE INDEX IF NOT EXISTS idx_landscapers_name_sort_key
+  ON landscapers (name_sort_key, name);
+
+-- ============================================================
 -- RPC : counts agrégés des chips du CRM (1 query au lieu de 7)
 -- Sémantique alignée sur applyQuickFilter() côté JS
 -- ============================================================
@@ -149,16 +169,17 @@ SECURITY DEFINER
 STABLE
 AS $$
   SELECT json_build_object(
-    -- "Tous" exclut désormais les hors_cible/exclu (ils ont leur propre chip)
-    'tous',          COUNT(*) FILTER (WHERE statut IS NULL OR statut NOT IN ('hors_cible','exclu')),
+    -- "Tous" exclut hors_cible/exclu/pas_interesse (chip dédiée pour ces leads écartés)
+    'tous',          COUNT(*) FILTER (WHERE statut IS NULL OR statut NOT IN ('hors_cible','exclu','pas_interesse')),
     'a_appeler',     COUNT(*) FILTER (WHERE nb_tentatives = 0 AND (statut IS NULL OR statut = 'nouveau')),
     'repondu',       COUNT(*) FILTER (WHERE premier_repondu_at IS NOT NULL),
     'sans_reponse',  COUNT(*) FILTER (WHERE nb_tentatives > 0 AND premier_repondu_at IS NULL),
     'rappel',        COUNT(*) FILTER (WHERE rappel_le IS NOT NULL),
     'interesse',     COUNT(*) FILTER (WHERE statut IN ('en_discussion','solution_envoyee','relance_essai','accompagne','gagne')),
-    -- Plus de hors_cible ici : ils sont dans leur chip dédiée
-    'pas_interesse', COUNT(*) FILTER (WHERE statut IN ('pas_interesse','perdu','sans_suite','a_ferme')),
-    'hors_cible',    COUNT(*) FILTER (WHERE statut IN ('hors_cible','exclu')),
+    -- "Pas intéressé" couvre maintenant uniquement perdu/sans_suite/a_ferme (pas_interesse fusionné dans hors_cible)
+    'pas_interesse', COUNT(*) FILTER (WHERE statut IN ('perdu','sans_suite','a_ferme')),
+    -- "Hors cible" inclut désormais pas_interesse (défensif au cas où des leads existent encore avec ce statut)
+    'hors_cible',    COUNT(*) FILTER (WHERE statut IN ('hors_cible','exclu','pas_interesse')),
     'avec_contact',  COUNT(*) FILTER (WHERE nom_gerant IS NOT NULL AND nom_gerant <> '' AND phone IS NOT NULL AND phone <> '')
   )
   FROM landscapers;
